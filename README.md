@@ -33,6 +33,7 @@ The `otx` package provides a unified, configuration-driven wrapper around OpenTe
 | [NATS Integration](docs/nats-integration.md) | JetStream publisher/consumer tracing |
 | [Testing](docs/testing.md) | Testing strategies with OTX |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
+| [OTLP Simulator CLI](docs/otlp-sim.md) | CLI tool for simulating traces and logs |
 
 ## Core Concepts
 
