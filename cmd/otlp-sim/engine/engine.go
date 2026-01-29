@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/arloliu/otx"
@@ -21,10 +22,40 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// errorHandler tracks export errors and reports them without flooding output.
+type errorHandler struct {
+	errorCount atomic.Int64
+	firstError atomic.Pointer[error]
+}
+
+// Handle implements otel.ErrorHandler.
+func (h *errorHandler) Handle(err error) {
+	count := h.errorCount.Add(1)
+	if count == 1 {
+		// Store first error for reporting
+		h.firstError.Store(&err)
+		fmt.Printf("Warning: OTLP export error: %v\n", err)
+	}
+}
+
+// Summary returns a summary of errors, or empty string if none.
+func (h *errorHandler) Summary() string {
+	count := h.errorCount.Load()
+	if count == 0 {
+		return ""
+	}
+	if count == 1 {
+		return "1 export error occurred (endpoint may be unreachable)"
+	}
+
+	return fmt.Sprintf("%d export errors occurred (endpoint may be unreachable)", count)
+}
+
 // Engine generates traces and logs from scenarios.
 type Engine struct {
 	tracerProvider *sdktrace.TracerProvider
 	loggerProvider *sdklog.LoggerProvider
+	errorHandler   *errorHandler
 	enableLogs     bool
 	jitterPct      int
 	serviceName    string
@@ -53,7 +84,9 @@ func New(ctx context.Context, cfg Config) (*Engine, error) {
 		serviceName = "otlp-sim"
 	}
 
+	enabled := true
 	telCfg := &otx.TelemetryConfig{
+		Enabled:     &enabled,
 		ServiceName: serviceName,
 		OTLP: &otx.OTLPConfig{
 			Endpoint: cfg.Endpoint,
@@ -63,6 +96,10 @@ func New(ctx context.Context, cfg Config) (*Engine, error) {
 		Traces: &otx.TracesConfig{},
 	}
 
+	// Set up error handler to track export failures
+	errHandler := &errorHandler{}
+	otel.SetErrorHandler(errHandler)
+
 	// Initialize tracer provider
 	tp, err := otx.NewTracerProvider(ctx, telCfg)
 	if err != nil {
@@ -71,6 +108,7 @@ func New(ctx context.Context, cfg Config) (*Engine, error) {
 
 	e := &Engine{
 		tracerProvider: tp,
+		errorHandler:   errHandler,
 		enableLogs:     cfg.EnableLogs,
 		jitterPct:      cfg.JitterPct,
 		serviceName:    serviceName,
@@ -105,6 +143,13 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
+	// Report export error summary
+	if e.errorHandler != nil {
+		if summary := e.errorHandler.Summary(); summary != "" {
+			fmt.Printf("Export summary: %s\n", summary)
+		}
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("shutdown errors: %v", errs)
 	}

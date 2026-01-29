@@ -1,15 +1,37 @@
 package engine
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/arloliu/otx/cmd/otlp-sim/scenario"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func TestNew_TelemetryConfigEnabled(t *testing.T) {
+	// Create engine with minimal config - this should set Enabled to true internally
+	// We use "none" exporter to avoid needing a real OTLP endpoint
+	ctx := context.Background()
+	cfg := Config{
+		Endpoint:    "localhost:4317",
+		ServiceName: "test-service",
+		Insecure:    true,
+	}
+
+	e, err := New(ctx, cfg)
+	require.NoError(t, err, "New should not return error")
+	require.NotNil(t, e, "Engine should not be nil")
+	require.NotNil(t, e.tracerProvider, "TracerProvider should be created when Enabled is true")
+
+	// Cleanup
+	err = e.Shutdown(ctx)
+	require.NoError(t, err, "Shutdown should succeed")
+}
 
 func TestToTraceSpanKind(t *testing.T) {
 	tests := []struct {
