@@ -66,3 +66,46 @@ func TestLoadConfigDefaults(t *testing.T) {
 	// Environment default is development
 	assert.Equal(t, "development", cfg.Environment)
 }
+
+func TestLoadConfig_JSON(t *testing.T) {
+	// Create a temporary config file
+	content := []byte(`{
+		"enabled": true,
+		"serviceName": "test-service-json",
+		"traces": {
+			"enabled": true,
+			"exporter": "otlp"
+		}
+	}`)
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "config.json")
+	err := os.WriteFile(tmpFile, content, 0o644)
+	require.NoError(t, err)
+
+	// Test loading from file
+	cfg, err := LoadConfig(tmpFile)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.True(t, *cfg.Enabled)
+	assert.Equal(t, "test-service-json", cfg.ServiceName)
+	assert.Equal(t, "otlp", cfg.Traces.Exporter)
+}
+
+func TestParseConfig_JSON(t *testing.T) {
+	jsonData := []byte(`{
+		"enabled": true,
+		"serviceName": "test-service-json-bytes",
+		"metrics": {
+			"enabled": true,
+			"interval": "10s"
+		}
+	}`)
+	cfg, err := ParseConfig(jsonData)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.True(t, *cfg.Enabled)
+	assert.Equal(t, "test-service-json-bytes", cfg.ServiceName)
+	assert.NotNil(t, cfg.Metrics)
+	assert.True(t, *cfg.Metrics.Enabled)
+	assert.Equal(t, "10s", cfg.Metrics.Interval.String())
+}
