@@ -1,8 +1,8 @@
 # Zap Logging
 
 The `otx/zaplog` package ships [zap](https://github.com/uber-go/zap) logs to any
-OTLP receiver over [zapwire](https://github.com/arloliu/zapwire)'s lean OTLP/HTTP
-exporter, deriving the resource identity (service.name, version, environment,
+OTLP receiver over [zapwire](https://github.com/arloliu/zapwire)'s lean OTLP
+exporter (HTTP or gRPC), deriving the resource identity (service.name, version, environment,
 resource attributes) from the same `TelemetryConfig` your traces use — so logs
 and traces join in the backend.
 
@@ -12,18 +12,17 @@ and traces join in the backend.
 - One resource identity: logs carry the same attributes as traces and metrics.
 - Trace correlation from `context.Context`: the active span's `trace_id` /
   `span_id` land in the OTLP `LogRecord` fields, not as string attributes.
-- Single encode pass, no SDK log bridge or gRPC on the log data path, at-most-once delivery with
-  counted drops (`Writer.DroppedLogs`).
+- Single encode pass, no SDK log bridge, no grpc-go dependency on the log data path,
+  at-most-once delivery with counted drops (`Writer.DroppedLogs`).
 
 ## Routing Rule
 
 A zap service can reach OTLP two ways. **Use exactly one per logger:**
 
-- **zaplog path** (this package): zap → zapwire OTLP/HTTP. The default for zap
-  services — lean, single-encode, HTTP-only.
+- **zaplog path** (this package): zap → zapwire OTLP/HTTP or OTLP/gRPC. The
+  default for zap services — lean, single-encode, no grpc-go on the data path.
 - **`otx.NewLoggerProvider`**: the OTel SDK log pipeline. Use it for non-zap
-  paths (slog bridge, the direct OTel log API) or when gRPC OTLP for logs is a
-  hard requirement.
+  paths (slog bridge, the direct OTel log API).
 
 Never run both for one logger — that double-ships every record.
 
@@ -74,13 +73,20 @@ func main() {
 }
 ```
 
-`zaplog` requires the HTTP protocol. The shared `OTLP.Protocol` now defaults to
-`http/protobuf`, so zaplog works out of the box with no extra configuration.
-If you explicitly set `OTLP.Protocol: grpc` (e.g. for traces/metrics on gRPC),
-use `telemetry.logs.protocol: http/protobuf` (env
-`OTEL_EXPORTER_OTLP_LOGS_PROTOCOL`) to override it for logs only. If the
-effective protocol resolves to `grpc`, `NewCore` returns a clear error pointing
-you here.
+`zaplog` supports both OTLP/HTTP and OTLP/gRPC. The shared `OTLP.Protocol`
+defaults to `http/protobuf`, so zaplog works out of the box with no extra
+configuration. To use gRPC, set `OTLP.Protocol: grpc` (or the per-signal
+`telemetry.logs.protocol: grpc` / env `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=grpc`).
+Default ports follow the protocol: `4318` for http/protobuf, `4317` for grpc.
+
+`zaplog`'s gRPC transport is zapwire's hand-rolled stdlib client — it does not
+add grpc-go to your binary's data path. Endpoint forms and scheme precedence are
+unchanged for both protocols (see Endpoint mapping below). For gRPC, header
+values must be printable ASCII without leading or trailing whitespace; values
+that violate this are rejected at construction with an actionable zapwire error.
+Reserved gRPC metadata key prefixes (`grpc-`, `-bin`, `content-type`, `te`) are
+also rejected at construction. Headers that work on HTTP may therefore fail on
+gRPC if they contain non-ASCII or whitespace-padded values.
 
 ### Endpoint mapping
 
@@ -90,10 +96,19 @@ needs:
 
 - bare `host:port` + `insecure: true` → `http://host:port`
 - bare `host:port` + `insecure: false` → `https://host:port`
+- bare host without a port → protocol default port is appended automatically
+  (`4317` for gRPC, `4318` for http/protobuf) before the scheme is prefixed
 - an endpoint already carrying a scheme passes through unchanged
 
-zapwire appends `/v1/logs` when the path is empty. Set the port explicitly in
-the endpoint — there is no automatic port rewriting.
+**HTTP/protobuf path semantics:** zapwire appends `/v1/logs` when the path is
+empty; custom paths (e.g. `http://collector:4318/custom/path`) are passed
+through unchanged.
+
+**gRPC path semantics:** gRPC always posts to the fixed OTel method path
+(`/opentelemetry.proto.collector.logs.v1.LogsService/Export`). Endpoint paths,
+query parameters, and fragments are **rejected at construction** with an
+actionable zapwire error — use a bare `host:port` or a path-free `http(s)://`
+URL for gRPC.
 
 ## Attach to an Existing Logger
 

@@ -32,13 +32,14 @@ A zap service can reach OTLP two ways:
    processor) → `otlploghttp`/`otlploggrpc`. Full SDK feature set and a gRPC option, but
    double-converts every record (zap field → `log.KeyValue` → proto) and drags
    grpc+protobuf into the binary.
-2. **zapwire path:** zap → `zapwire/otlp.NewCore` → its own async HTTP exporter. Single
-   encode pass (~228 ns / 8 allocs per record, byte-identity protobuf), no SDK/grpc/
-   protobuf, at-most-once with counted drops — but OTLP/HTTP only.
+2. **zapwire path:** zap → `zapwire/otlp.NewCore` / `otlp.NewGRPCCore` → its own async
+   OTLP exporter (HTTP or hand-rolled gRPC, zero grpc-go in the data plane). Single
+   encode pass (~228 ns / 8 allocs per record, byte-identity protobuf), no SDK/protobuf,
+   at-most-once with counted drops.
 
 **Routing rule (to document in both repos):** services that log with zap ship logs via the
 zapwire path; `otx.NewLoggerProvider` remains for non-zap paths (slog bridge, direct OTel
-log API) or when gRPC OTLP for logs is a hard requirement. Never run both for one logger.
+log API). Never run both for one logger.
 
 ### Correlation invariant
 
@@ -120,17 +121,14 @@ func New(ctx context.Context, cfg *otx.TelemetryConfig, base *zap.Logger,
 ANY core composition (the injected field is consumed by the otlp encoder and rendered
 legibly by tee'd console/JSON cores).
 
-### 3.2 Endpoint, protocol & transport-option mapping (pass-1 P1 ×2)
+### 3.2 Endpoint, protocol & transport-option mapping (pass-1 P1 ×2, updated pass-3)
 
-otx endpoints are `host:port` (default `localhost:4318`, default protocol
-`http/protobuf` on the shared `OTLPConfig` — shared default flipped to http/protobuf
-post-review; spec-aligned); zapwire/otlp needs `http(s)://host:port` and is
-HTTP-only. Today `LogsConfig` has only `Enabled`/`Exporter`/`Endpoint` (`config.go:126`)
-— there is **no per-signal logs protocol field**, and the real fallback chain runs
-through `GetOTLPConfig()`, which folds the deprecated `Exporter.*` fields into the shared
-shape (`config.go:335`). The design therefore:
-
-**Adds `LogsConfig.Protocol`** (mirrors the per-signal `Endpoint` override pattern):
+otx endpoints are `host:port` (default protocol `http/protobuf` on the shared
+`OTLPConfig` — shared default flipped to http/protobuf post-review; spec-aligned);
+zapwire/otlp needs `http(s)://host:port` and supports both HTTP and gRPC.
+`LogsConfig` has `Enabled`, `Exporter`, `Endpoint`, and `Protocol`
+(`config.go:132-153`). The fallback chain runs through `GetOTLPConfig()`, which
+folds the deprecated `Exporter.*` fields into the shared shape. The design:
 
 ```go
 // Protocol overrides OTLP.Protocol for logs.
@@ -139,11 +137,11 @@ Protocol string `yaml:"protocol,omitempty" json:"protocol,omitempty" env:"OTEL_E
 
 `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL` is the OTel-spec env name. The field is also wired
 into `resolveLogExporterParams` so the SDK path (`NewLoggerProvider`) honors it —
-keeping the two pipelines config-compatible. This is deliberately **logs-only**:
-`TracesConfig`/`MetricsConfig` keep no per-signal protocol field — the asymmetry exists
-because zaplog's HTTP-only transport needs a way to diverge from an explicitly-grpc
-shared protocol without affecting traces/metrics; it is not a precedent for adding
-per-signal protocol elsewhere.
+keeping the two pipelines config-compatible.
+
+`LogsConfig.Protocol` is deliberately logs-only and is not a precedent for
+per-signal protocol overrides on traces or metrics (which route exclusively through
+the shared `OTLPConfig` today).
 
 **Mapping rules for `zaplog.NewCore`** (all "effective" values resolved through the same
 chain `resolveLogExporterParams` uses). The base is `GetOTLPConfig()`, whose semantics
@@ -156,14 +154,18 @@ when non-nil, and converts the deprecated `Exporter` block only when `cfg.OTLP =
    (= `OTLP.Endpoint`, or deprecated `Exporter.Endpoint` only when no `OTLP` block —
    backward compatible with existing otx configs).
 2. Effective protocol: `Logs.Protocol` if set, else `GetOTLPConfig().Protocol` (same
-   wholesale rule). Must be `http/protobuf` (or the `http` alias); the shared default
-   is now `http/protobuf` so this resolves correctly without any override. If it
-   resolves to `grpc` (e.g. shared protocol set explicitly to grpc), return a **clear
-   error** ("zaplog requires logs protocol http/protobuf; set telemetry.logs.protocol,
-   or use otx.NewLoggerProvider for gRPC").
+   wholesale rule). The shared default is `http/protobuf`. Protocol routing in
+   `NewCore`: when the effective protocol is `grpc`, `NewCore` calls
+   `otlp.NewGRPCCore` — zapwire's hand-rolled OTLP/gRPC client (zero grpc-go in the
+   data plane); any other protocol calls `otlp.NewCore` (HTTP). Default endpoints
+   follow the effective protocol: `grpc` → `localhost:4317`, `http/protobuf` →
+   `localhost:4318`. The pinned-error clause (prior rule 2) is removed: gRPC is now
+   a supported path, not a rejection.
 3. Scheme: bare `host:port` + effective `Insecure: true` → `http://`; otherwise
-   `https://`. An endpoint already carrying a scheme passes through (zapwire validates
-   and appends `/v1/logs` only to empty or `/` paths).
+   `https://`. An endpoint already carrying a scheme passes through unchanged. For the
+   gRPC path, zapwire additionally rejects URL paths at construction with an actionable
+   error (e.g. `http://host:4317/path` is invalid for gRPC — use bare `host:4317`
+   or a path-free scheme URL).
 4. **Config-derived transport options are part of `NewCore`, not caller homework**: the
    effective `Headers` → `otlp.WithHeaders`, `Timeout` → `otlp.WithTimeout`,
    `Compression: gzip` → `otlp.WithCompression(otlp.Gzip)`. Without this, services with
@@ -258,13 +260,18 @@ when implementing).
    mapping, resource translation, `NewCore` (config-derived options first, caller opts
    after).
 3. `zaplog/logger.go`: `Attach`, `Logger` ctx methods + wrapper-preserving `With`/`Named`.
-4. Tests (from the pass-1 review):
+4. Tests (from the pass-1 review, updated pass-3):
    - endpoint precedence table reflecting GetOTLPConfig's WHOLESALE semantics:
      `Logs.Endpoint` overlay; `OTLP` block present (deprecated `Exporter` ignored
-     entirely); `OTLP` nil + deprecated `Exporter.Endpoint`; empty default; full-URL
-     pass-through vs `/v1/logs` append.
-   - protocol/security/options table: per-signal override, grpc rejection error, `http`
-     alias, `Insecure` scheme selection, headers, timeout, gzip.
+     entirely); `OTLP` nil + deprecated `Exporter.Endpoint`; empty default (per-protocol:
+     `grpc` → 4317, `http` → 4318); full-URL pass-through vs `/v1/logs` append.
+   - protocol/security/options table: per-signal override, grpc routing to `NewGRPCCore`
+     + e2e with real gRPC capture server, `http` alias, `Insecure` scheme selection,
+     headers, timeout, gzip.
+   - gRPC routing: `TestNewCore_GRPCRoutes` (non-nil core+writer, nil error);
+     `TestNewCore_GRPCEndToEnd` (real grpc-go LogsService capture server; body + service
+     name verified); `TestNewCore_GRPCDefaultEndpoint` (effectiveEndpoint unit tests for
+     both protocols; NewCore construction succeeds with no endpoint).
    - resource parity: concrete attribute keys/values from `BuildResource`
      (`service.name`, `service.version`, `deployment.environment`, `ResourceAttributes`)
      present in the encoded request; **exactly one `service.name`** (extracted for
@@ -293,10 +300,9 @@ when implementing).
 
 ## 6. Dependency bootstrap note
 
-`github.com/arloliu/zapwire/otlp` has no release tag yet (zapwire PR #4 open). Until it
-merges and gains an `otlp/vX.Y.Z` tag, otx pins a pseudo-version against the pushed
-branch commit (`go get github.com/arloliu/zapwire/otlp@<commit>`); bump to the tag after
-merge. No `replace` directive is committed.
+otx pins `github.com/arloliu/zapwire/otlp v0.2.0` (released 2026-06-13; adds
+`otlp.NewGRPCCore` for the hand-rolled OTLP/gRPC client). No `replace` directive is
+committed.
 
 ## 7. Review pass-1 resolutions
 
@@ -314,4 +320,12 @@ merge. No `replace` directive is committed.
 |---|---|
 | **P1** Precedence table misrepresented `GetOTLPConfig()` as field-merge | §3.2 now states the wholesale rule (`cfg.OTLP` returned as-is when non-nil; deprecated `Exporter` converted only when `OTLP == nil`) with `Logs.*` per-field overlays on top; test matrix rows updated to encode it. |
 | **P1** `service.name` would be emitted twice (resource attrs + WithServiceName) | §3.3 de-duplication rule: extract `service.name` for `WithServiceName`, exclude from `WithResource`; exactly-one-`service.name` test added. |
-| **P2** `Logs.Protocol` per-signal asymmetry undocumented | §3.2 notes the field is deliberately logs-only (HTTP-only transport needs divergence from an explicitly-grpc shared protocol) and not a precedent for traces/metrics. |
+| **P2** `Logs.Protocol` per-signal asymmetry undocumented | §3.2 notes the field is deliberately logs-only and not a precedent for traces/metrics. |
+
+## 9. Review pass-3 resolutions (2026-06-13)
+
+| Finding | Resolution |
+|---|---|
+| **P1** zaplog was HTTP-only; gRPC protocol was rejected with a pinned error | §3.2 rule 2 rewritten: grpc protocol routes to `otlp.NewGRPCCore` (zapwire's hand-rolled OTLP/gRPC client, zero grpc-go in the data plane); pinned-error clause removed; default endpoints now per-protocol (4318 HTTP, 4317 gRPC). |
+| **P1** Test matrix had grpc rejection row | Updated to grpc routing + e2e (real grpc-go capture server) + construction rows. |
+| **dep** zapwire/otlp pinned at v0.1.0 | Bumped to `otlp/v0.2.0` (adds `NewGRPCCore`). |

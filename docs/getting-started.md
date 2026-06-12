@@ -92,14 +92,13 @@ cfg, err := otx.LoadConfig("config.yaml")
 
 If your service logs with [zap](https://github.com/uber-go/zap), ship logs over
 the lightweight `otx/zaplog` adapter instead of the SDK log bridge. **Routing
-rule:** zap services use the zaplog path (zap → zapwire OTLP/HTTP, single encode
-pass, no SDK log bridge or gRPC on the log data path); `otx.NewLoggerProvider` stays for non-zap
-paths (slog bridge, the direct OTel log API) or when gRPC OTLP for logs is a hard
-requirement. Never run both for one logger. zaplog is HTTP-only and works with the
-default `http/protobuf` protocol out of the box — no extra `logs.protocol` override
-needed unless you explicitly set `OTLP.Protocol` to `grpc`. zaplog derives its
-resource identity from the same config as your traces, so logs and traces join in
-the backend. See the [Zap Logging](zap-logging.md) guide.
+rule:** zap services use the zaplog path (zap → zapwire OTLP, single encode pass,
+no SDK log bridge); `otx.NewLoggerProvider` stays for non-zap paths (slog bridge,
+the direct OTel log API). Never run both for one logger. zaplog supports both
+`http/protobuf` (default, port 4318) and `grpc` (port 4317) — set
+`logs.protocol: grpc` or `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=grpc` to opt in. zaplog
+derives its resource identity from the same config as your traces, so logs and traces
+join in the backend. See the [Zap Logging](zap-logging.md) guide.
 
 ## Next Steps
 
