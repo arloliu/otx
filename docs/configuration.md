@@ -107,7 +107,8 @@ field otlp.endpoint: invalid endpoint scheme "grpc": transport is selected by
 protocol, not the endpoint scheme; use host:port or an http(s):// URL
 ```
 
-An empty endpoint is valid; the default (`localhost:4318`) applies.
+An empty endpoint is valid; the default follows the effective protocol —
+`localhost:4318` for `http/protobuf` (the default), `localhost:4317` for `grpc`.
 
 **Scheme-overrides-insecure precedence:** when a URL scheme is provided, it
 wins over the `insecure` flag. `https://host:4318` is always TLS regardless of
