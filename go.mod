@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/arloliu/fuda v1.5.0
-	github.com/arloliu/zapwire/otlp v0.1.0
+	github.com/arloliu/zapwire/otlp v0.2.0
 	github.com/nats-io/nats.go v1.48.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.64.0

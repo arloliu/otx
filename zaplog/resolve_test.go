@@ -15,11 +15,13 @@ func boolPtr(b bool) *bool { return &b }
 // Endpoint precedence reflects GetOTLPConfig's WHOLESALE semantics: an OTLP
 // block present means the deprecated Exporter block is ignored entirely; a nil
 // OTLP block falls back to deprecated Exporter; Logs.Endpoint overlays on top.
+// The default also varies by protocol: grpc → localhost:4317, http → localhost:4318.
 func TestEffectiveEndpoint_Precedence(t *testing.T) {
 	tests := []struct {
-		name string
-		cfg  *otx.TelemetryConfig
-		want string
+		name     string
+		cfg      *otx.TelemetryConfig
+		protocol string
+		want     string
 	}{
 		{
 			name: "logs endpoint overlay wins over OTLP",
@@ -27,7 +29,8 @@ func TestEffectiveEndpoint_Precedence(t *testing.T) {
 				OTLP: &otx.OTLPConfig{Endpoint: "shared:4317"},
 				Logs: &otx.LogsConfig{Endpoint: "logs:4318"},
 			},
-			want: "logs:4318",
+			protocol: protocolHTTPProtobuf,
+			want:     "logs:4318",
 		},
 		{
 			name: "OTLP block present, deprecated Exporter ignored",
@@ -35,26 +38,35 @@ func TestEffectiveEndpoint_Precedence(t *testing.T) {
 				OTLP:     &otx.OTLPConfig{Endpoint: "shared:4317"},
 				Exporter: &otx.ExporterConfig{Endpoint: "deprecated:4317"},
 			},
-			want: "shared:4317",
+			protocol: protocolHTTPProtobuf,
+			want:     "shared:4317",
 		},
 		{
 			name: "nil OTLP falls back to deprecated Exporter",
 			cfg: &otx.TelemetryConfig{
 				Exporter: &otx.ExporterConfig{Endpoint: "deprecated:4317"},
 			},
-			want: "deprecated:4317",
+			protocol: protocolHTTPProtobuf,
+			want:     "deprecated:4317",
 		},
 		{
-			name: "empty default",
-			cfg:  &otx.TelemetryConfig{},
-			want: defaultEndpoint,
+			name:     "empty default for http/protobuf is localhost:4318",
+			cfg:      &otx.TelemetryConfig{},
+			protocol: protocolHTTPProtobuf,
+			want:     defaultEndpointHTTP,
+		},
+		{
+			name:     "empty default for grpc is localhost:4317",
+			cfg:      &otx.TelemetryConfig{},
+			protocol: protocolGRPC,
+			want:     defaultEndpointGRPC,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			base := tt.cfg.GetOTLPConfig()
-			assert.Equal(t, tt.want, effectiveEndpoint(tt.cfg, base))
+			assert.Equal(t, tt.want, effectiveEndpoint(tt.cfg, base, tt.protocol))
 		})
 	}
 }
@@ -130,7 +142,58 @@ func TestBuildEndpoint_Scheme(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildEndpoint(tt.endpoint, tt.insecure)
+			got, err := buildEndpoint(tt.endpoint, tt.insecure, "4318")
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestBuildEndpoint_HostOnly verifies that a bare host without a port (e.g.
+// "collector") receives the protocol default port before the scheme is prefixed.
+// Without this, "collector" + grpc + insecure would become "http://collector"
+// and the HTTP client would target port 80 instead of 4317.
+func TestBuildEndpoint_HostOnly(t *testing.T) {
+	tests := []struct {
+		name        string
+		endpoint    string
+		insecure    bool
+		defaultPort string
+		want        string
+	}{
+		{
+			name:        "host-only + grpc + insecure gets 4317",
+			endpoint:    "collector",
+			insecure:    true,
+			defaultPort: "4317",
+			want:        "http://collector:4317",
+		},
+		{
+			name:        "host-only + http/protobuf + secure gets 4318",
+			endpoint:    "collector",
+			insecure:    false,
+			defaultPort: "4318",
+			want:        "https://collector:4318",
+		},
+		{
+			name:        "host:port existing port unchanged",
+			endpoint:    "collector:9999",
+			insecure:    true,
+			defaultPort: "4317",
+			want:        "http://collector:9999",
+		},
+		{
+			name:        "IPv6 with brackets and port unchanged",
+			endpoint:    "[::1]:4317",
+			insecure:    true,
+			defaultPort: "4317",
+			want:        "http://[::1]:4317",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildEndpoint(tt.endpoint, tt.insecure, tt.defaultPort)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -164,7 +227,7 @@ func TestBuildEndpoint_SchemeOverridesInsecure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildEndpoint(tt.endpoint, tt.insecure)
+			got, err := buildEndpoint(tt.endpoint, tt.insecure, "4318")
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -178,7 +241,7 @@ func TestBuildEndpoint_SchemeOverridesInsecure(t *testing.T) {
 func TestBuildEndpoint_InvalidScheme(t *testing.T) {
 	for _, ep := range []string{"grpc://h:4317", "tcp://h:1", "GRPC://h:4317"} {
 		t.Run(ep, func(t *testing.T) {
-			got, err := buildEndpoint(ep, true)
+			got, err := buildEndpoint(ep, true, "4318")
 			require.Error(t, err)
 			assert.Empty(t, got)
 			assert.Contains(t, err.Error(), "invalid endpoint scheme")
@@ -264,12 +327,12 @@ func TestResolveExporterParams_EndpointClassification(t *testing.T) {
 				},
 			}
 			base := cfg.GetOTLPConfig()
-			ep := effectiveEndpoint(cfg, base)
+			ep := effectiveEndpoint(cfg, base, protocolHTTPProtobuf)
 			// The shared classifier agrees with what buildEndpoint will do.
 			assert.Equal(t, tt.want.isURL, endpoint.IsHTTP(ep),
 				"classifier disagreed for %q", ep)
 			// buildEndpoint produces the expected final URL.
-			built, err := buildEndpoint(ep, base.IsInsecure())
+			built, err := buildEndpoint(ep, base.IsInsecure(), "4318")
 			require.NoError(t, err)
 			assert.Equal(t, tt.want.endpoint, built)
 		})

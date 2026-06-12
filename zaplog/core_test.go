@@ -2,7 +2,9 @@ package zaplog
 
 import (
 	"context"
+	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,14 +13,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc"
 )
-
-// grpcRejectionMsg is the spec-pinned error string (design §3.2 rule 2).
-// Tests use the literal, not the sentinel, so they catch any future drift.
-const grpcRejectionMsg = "zaplog requires logs protocol http/protobuf; " +
-	"set telemetry.logs.protocol, or use otx.NewLoggerProvider for gRPC"
 
 // baseCfg is a minimal enabled config pointing logs at the given http endpoint.
 func httpCfg(endpoint string) *otx.TelemetryConfig {
@@ -32,18 +31,196 @@ func httpCfg(endpoint string) *otx.TelemetryConfig {
 	}
 }
 
-func TestNewCore_RejectsGRPC(t *testing.T) {
+// captureLogsService is a minimal gRPC LogsService capture server for testing.
+type captureLogsService struct {
+	collogspb.UnimplementedLogsServiceServer
+	mu       sync.Mutex
+	requests []*collogspb.ExportLogsServiceRequest
+}
+
+func (s *captureLogsService) Export(
+	_ context.Context,
+	req *collogspb.ExportLogsServiceRequest,
+) (*collogspb.ExportLogsServiceResponse, error) {
+	s.mu.Lock()
+	s.requests = append(s.requests, req)
+	s.mu.Unlock()
+
+	return &collogspb.ExportLogsServiceResponse{}, nil
+}
+
+func (s *captureLogsService) allRequests() []*collogspb.ExportLogsServiceRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*collogspb.ExportLogsServiceRequest, len(s.requests))
+	copy(out, s.requests)
+
+	return out
+}
+
+// newGRPCCaptureServer starts a plaintext gRPC server on a random port and
+// returns the listener address and the capture service. The server is stopped
+// via t.Cleanup.
+func newGRPCCaptureServer(t *testing.T) (addr string, svc *captureLogsService) {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	svc = &captureLogsService{}
+	srv := grpc.NewServer()
+	collogspb.RegisterLogsServiceServer(srv, svc)
+	t.Cleanup(srv.Stop)
+
+	go func() { _ = srv.Serve(lis) }()
+
+	return lis.Addr().String(), svc
+}
+
+// TestNewCore_GRPCRoutes verifies that a config with protocol grpc routes to
+// zapwire's OTLP/gRPC transport and returns a non-nil core and writer without
+// error.
+func TestNewCore_GRPCRoutes(t *testing.T) {
 	cfg := &otx.TelemetryConfig{
 		Enabled:     boolPtr(true),
 		ServiceName: "svc",
-		OTLP:        &otx.OTLPConfig{Endpoint: "collector:4317", Protocol: "grpc"},
-		Logs:        &otx.LogsConfig{Enabled: boolPtr(true)},
+		OTLP: &otx.OTLPConfig{
+			Endpoint: "localhost:4317",
+			Protocol: "grpc",
+			Insecure: boolPtr(true), // default-insecure → http:// → h2c
+		},
+		Logs: &otx.LogsConfig{Enabled: boolPtr(true)},
 	}
 
 	core, w, err := NewCore(context.Background(), cfg, zapcore.InfoLevel)
-	require.EqualError(t, err, grpcRejectionMsg)
-	assert.Nil(t, core)
-	assert.Nil(t, w)
+	require.NoError(t, err, "grpc protocol must route to NewGRPCCore without error")
+	require.NotNil(t, core)
+	require.NotNil(t, w)
+	t.Cleanup(func() { _ = w.Close() })
+}
+
+// TestNewCore_GRPCEndToEnd verifies that logs written through a grpc-protocol
+// core actually arrive at a real gRPC LogsService server, carrying the service
+// name and the logged message body.
+func TestNewCore_GRPCEndToEnd(t *testing.T) {
+	addr, svc := newGRPCCaptureServer(t)
+
+	cfg := &otx.TelemetryConfig{
+		Enabled:     boolPtr(true),
+		ServiceName: "grpc-e2e-svc",
+		OTLP: &otx.OTLPConfig{
+			// Bare host:port + Insecure → http:// → h2c (no TLS)
+			Endpoint: addr,
+			Protocol: "grpc",
+			Insecure: boolPtr(true),
+		},
+		Logs: &otx.LogsConfig{Enabled: boolPtr(true)},
+	}
+
+	core, w, err := NewCore(context.Background(), cfg, zapcore.InfoLevel)
+	require.NoError(t, err)
+	require.NotNil(t, core)
+	require.NotNil(t, w)
+	t.Cleanup(func() { _ = w.Close() })
+
+	logger := zap.New(core)
+	logger.Info("grpc-e2e-message", zap.String("key", "val"))
+	require.NoError(t, w.Sync())
+
+	reqs := svc.allRequests()
+	require.Len(t, reqs, 1, "server must receive exactly one ExportLogsServiceRequest")
+
+	// Verify the log body.
+	var body string
+	for _, rl := range reqs[0].GetResourceLogs() {
+		for _, sl := range rl.GetScopeLogs() {
+			for _, rec := range sl.GetLogRecords() {
+				body = rec.GetBody().GetStringValue()
+			}
+		}
+	}
+	assert.Equal(t, "grpc-e2e-message", body)
+
+	// Verify service.name appears in resource attributes.
+	var foundSvc bool
+	for _, rl := range reqs[0].GetResourceLogs() {
+		for _, attr := range rl.GetResource().GetAttributes() {
+			if attr.GetKey() == serviceNameKey && attr.GetValue().GetStringValue() == "grpc-e2e-svc" {
+				foundSvc = true
+			}
+		}
+	}
+	assert.True(t, foundSvc, "service.name must appear in resource attributes")
+}
+
+// TestNewCore_GRPCDefaultEndpoint verifies that when no endpoint is configured
+// and protocol is grpc, effectiveEndpoint returns localhost:4317; for
+// http/protobuf it returns localhost:4318.
+func TestNewCore_GRPCDefaultEndpoint(t *testing.T) {
+	// Test effectiveEndpoint directly — it is in the same package and provides
+	// the cleanest unit seam for default-endpoint validation without a dial.
+	t.Run("grpc default is 4317", func(t *testing.T) {
+		cfg := &otx.TelemetryConfig{}
+		base := cfg.GetOTLPConfig()
+		assert.Equal(t, defaultEndpointGRPC, effectiveEndpoint(cfg, base, protocolGRPC))
+	})
+
+	t.Run("http/protobuf default is 4318", func(t *testing.T) {
+		cfg := &otx.TelemetryConfig{}
+		base := cfg.GetOTLPConfig()
+		assert.Equal(t, defaultEndpointHTTP, effectiveEndpoint(cfg, base, protocolHTTPProtobuf))
+	})
+
+	t.Run("NewCore grpc with no endpoint succeeds construction", func(t *testing.T) {
+		// NewCore must not dial at construction — grpc with no endpoint should
+		// succeed (default endpoint 4317 is set; dial happens at first export).
+		cfg := &otx.TelemetryConfig{
+			Enabled:     boolPtr(true),
+			ServiceName: "svc",
+			OTLP: &otx.OTLPConfig{
+				Protocol: "grpc",
+				Insecure: boolPtr(true),
+			},
+			Logs: &otx.LogsConfig{Enabled: boolPtr(true)},
+		}
+		core, w, err := NewCore(context.Background(), cfg, zapcore.InfoLevel)
+		require.NoError(t, err, "construction must succeed even when no endpoint is configured")
+		require.NotNil(t, core)
+		require.NotNil(t, w)
+		t.Cleanup(func() { _ = w.Close() })
+	})
+}
+
+// TestNewCore_LoadedConfigGRPCDefault verifies that a config loaded via
+// otx.ParseConfig (which runs fuda defaults) with otlp.protocol: grpc and
+// no endpoint results in effectiveEndpoint returning localhost:4317. This
+// pins the P1-1 fix: removing OTLPConfig.Endpoint's struct-tag default
+// prevents fuda from materialising "localhost:4318" before the resolver runs.
+func TestNewCore_LoadedConfigGRPCDefault(t *testing.T) {
+	cfg, err := otx.ParseConfig([]byte(`
+enabled: true
+serviceName: "svc"
+otlp:
+  protocol: grpc
+logs:
+  enabled: true
+`))
+	require.NoError(t, err)
+
+	// Confirm fuda did NOT inject the old 4318 default.
+	require.Equal(t, "", cfg.OTLP.Endpoint, "loaded grpc config must have empty endpoint")
+
+	base := cfg.GetOTLPConfig()
+	protocol := effectiveProtocol(cfg, base)
+	ep := effectiveEndpoint(cfg, base, protocol)
+	assert.Equal(t, defaultEndpointGRPC, ep,
+		"zaplog effectiveEndpoint must return 4317 for a loaded grpc config with no endpoint")
+
+	// Construction must also succeed (zapwire does not dial at build time).
+	core, w, err := NewCore(context.Background(), cfg, zapcore.InfoLevel)
+	require.NoError(t, err, "NewCore must succeed for loaded grpc config with no endpoint")
+	require.NotNil(t, core)
+	require.NotNil(t, w)
+	t.Cleanup(func() { _ = w.Close() })
 }
 
 func TestNewCore_RejectsInvalidEndpointScheme(t *testing.T) {
@@ -51,7 +228,7 @@ func TestNewCore_RejectsInvalidEndpointScheme(t *testing.T) {
 	// the only validation seam. An invalid endpoint scheme (grpc://) must surface
 	// the classifier's actionable error rather than being prefixed into garbage
 	// ("https://grpc://collector:4317") and deferred to a dial failure. Protocol
-	// is http/protobuf so the grpc-protocol guard does not short-circuit first —
+	// is http/protobuf so NewCore routes to otlp.NewCore, not otlp.NewGRPCCore —
 	// the endpoint check must be what rejects this.
 	cfg := &otx.TelemetryConfig{
 		Enabled:     boolPtr(true),
