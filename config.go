@@ -66,12 +66,16 @@ type OTLPConfig struct {
 	// Maps to OTEL_EXPORTER_OTLP_ENDPOINT.
 	//
 	// Accepted forms (both protocols):
-	//   - Bare "host:port" (e.g., "localhost:4318") — canonical form; TLS
-	//     controlled by the Insecure flag.
+	//   - Bare "host:port" (e.g., "localhost:4317" for gRPC, "localhost:4318"
+	//     for HTTP) — canonical form; TLS controlled by the Insecure flag.
 	//   - Scheme-bearing URL (e.g., "https://collector:4317") — scheme takes
 	//     precedence over Insecure; https:// is always TLS, http:// is always
 	//     plain. Any other scheme is rejected at load time.
-	Endpoint string `yaml:"endpoint" json:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT" default:"localhost:4318"`
+	//
+	// The effective default is protocol-aware and applied at exporter/zaplog
+	// resolution, not at config load: http/protobuf → localhost:4318,
+	// grpc → localhost:4317. Leave empty to use the protocol default.
+	Endpoint string `yaml:"endpoint" json:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
 
 	// Insecure disables TLS for the OTLP connection.
 	// Maps to OTEL_EXPORTER_OTLP_INSECURE.
@@ -148,9 +152,8 @@ type LogsConfig struct {
 	// Protocol overrides OTLP.Protocol for logs.
 	// Maps to OTEL_EXPORTER_OTLP_LOGS_PROTOCOL.
 	// Options: "grpc", "http/protobuf", "http".
-	// The otx/zaplog adapter is HTTP-only and requires "http/protobuf" (or the
-	// "http" alias); set this when the shared OTLP.Protocol is "grpc" but logs
-	// ship over zaplog's OTLP/HTTP exporter.
+	// The otx/zaplog adapter routes "grpc" to zapwire's hand-rolled OTLP/gRPC
+	// client and anything else to OTLP/HTTP. Default is "http/protobuf" (port 4318).
 	Protocol string `yaml:"protocol,omitempty" json:"protocol,omitempty" env:"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL" validate:"omitempty,oneof=grpc http/protobuf http"`
 
 	// MinLevel is the minimum zap level the otx/zaplog OTLP core emits.
@@ -331,10 +334,15 @@ func (c *TelemetryConfig) GetTracesExporter() string {
 }
 
 // GetOTLPEndpoint returns the effective OTLP endpoint for traces.
-// Priority: Traces.Endpoint > OTLP.Endpoint > Exporter.Endpoint (deprecated).
+// Priority: Traces.Endpoint > OTLP.Endpoint > Exporter.Endpoint (deprecated);
+// when none is set, the default follows the effective protocol (grpc →
+// localhost:4317, otherwise localhost:4318).
+//
+// Deprecated: the exporter builders resolve endpoints internally; this
+// accessor is retained for API compatibility only.
 func (c *TelemetryConfig) GetOTLPEndpoint() string {
 	if c == nil {
-		return "localhost:4318"
+		return defaultEndpointFor("")
 	}
 	if c.Traces != nil && c.Traces.Endpoint != "" {
 		return c.Traces.Endpoint
@@ -346,7 +354,7 @@ func (c *TelemetryConfig) GetOTLPEndpoint() string {
 		return c.Exporter.Endpoint
 	}
 
-	return "localhost:4318"
+	return defaultEndpointFor(c.GetOTLPConfig().Protocol)
 }
 
 // GetOTLPConfig returns the effective OTLP config.

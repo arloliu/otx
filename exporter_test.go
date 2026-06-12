@@ -244,6 +244,92 @@ func TestBuildGRPCOptions_SchemePrecedence(t *testing.T) {
 	}
 }
 
+// TestResolveExporterParams_ProtocolAwareDefault asserts that when no endpoint
+// is configured in the shared OTLP block, the default endpoint follows the
+// effective protocol: grpc → localhost:4317, http/protobuf → localhost:4318.
+// This covers trace, metric, and log params (all three call defaultEndpointFor
+// after per-signal resolution).
+func TestResolveExporterParams_ProtocolAwareDefault(t *testing.T) {
+	cases := []struct {
+		name     string
+		protocol string
+		want     string
+	}{
+		{name: "grpc uses 4317", protocol: "grpc", want: "localhost:4317"},
+		{name: "http/protobuf uses 4318", protocol: "http/protobuf", want: "localhost:4318"},
+		{name: "http alias uses 4318", protocol: "http", want: "localhost:4318"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &TelemetryConfig{
+				Enabled:     boolPtr(true),
+				ServiceName: "svc",
+				OTLP:        &OTLPConfig{Protocol: tt.protocol},
+			}
+
+			trace := resolveTraceExporterParams(cfg)
+			assert.Equal(t, tt.want, trace.Endpoint, "trace: %s", tt.name)
+
+			metric := resolveMetricExporterParams(cfg)
+			assert.Equal(t, tt.want, metric.Endpoint, "metric: %s", tt.name)
+
+			log := resolveLogExporterParams(cfg)
+			assert.Equal(t, tt.want, log.Endpoint, "log: %s", tt.name)
+		})
+	}
+}
+
+// TestResolveExporterParams_LoadedConfigGRPCDefault verifies that a config loaded
+// via ParseConfig (which runs fuda defaults) with otlp.protocol: grpc but no
+// endpoint yields localhost:4317 — not localhost:4318 from a stale struct-tag
+// default. This is the loaded-config regression for P1-1: removing the
+// OTLPConfig.Endpoint default tag means fuda no longer materialises "localhost:4318"
+// in the OTLP block, so the protocol-aware resolver can apply the correct default.
+func TestResolveExporterParams_LoadedConfigGRPCDefault(t *testing.T) {
+	// (a) otlp.protocol: grpc with endpoint omitted — resolver must choose 4317.
+	cfg, err := ParseConfig([]byte(`
+enabled: true
+serviceName: "svc"
+otlp:
+  protocol: grpc
+`))
+	require.NoError(t, err)
+	// Pin that fuda did NOT inject a 4318 default — the endpoint field must be empty.
+	require.Equal(t, "", cfg.OTLP.Endpoint, "OTLPConfig.Endpoint must be empty after ParseConfig when omitted")
+
+	logParams := resolveLogExporterParams(cfg)
+	assert.Equal(t, "localhost:4317", logParams.Endpoint, "log resolver must default to 4317 for grpc")
+
+	traceParams := resolveTraceExporterParams(cfg)
+	assert.Equal(t, "localhost:4317", traceParams.Endpoint, "trace resolver must default to 4317 for grpc")
+
+	// (b) otlp: {} (no explicit fields) — resolver must choose 4318 (http/protobuf default).
+	cfgHTTP, err := ParseConfig([]byte(`
+enabled: true
+serviceName: "svc"
+otlp: {}
+`))
+	require.NoError(t, err)
+	require.Equal(t, "", cfgHTTP.OTLP.Endpoint,
+		"OTLPConfig.Endpoint must be empty after ParseConfig when omitted (http)")
+	logParamsHTTP := resolveLogExporterParams(cfgHTTP)
+	assert.Equal(t, "localhost:4318", logParamsHTTP.Endpoint,
+		"log resolver must default to 4318 for http/protobuf")
+
+	// (c) explicit http/protobuf — same result as (b), confirmed.
+	cfgExplicit, err := ParseConfig([]byte(`
+enabled: true
+serviceName: "svc"
+otlp:
+  protocol: http/protobuf
+`))
+	require.NoError(t, err)
+	logParamsExplicit := resolveLogExporterParams(cfgExplicit)
+	assert.Equal(t, "localhost:4318", logParamsExplicit.Endpoint,
+		"log resolver must default to 4318 for explicit http/protobuf")
+}
+
 func kinds(opts []opt) []string {
 	out := make([]string, 0, len(opts))
 	for _, o := range opts {
