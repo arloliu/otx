@@ -20,8 +20,8 @@ telemetry:
 **Check 2: Exporter endpoint is correct**
 ```bash
 echo $OTEL_EXPORTER_OTLP_ENDPOINT
-# For gRPC: host:port (e.g., localhost:4317)
-# For HTTP: full URL (e.g., http://localhost:4318/v1/traces)
+# Canonical form for both protocols: host:port (e.g., localhost:4317 or localhost:4318)
+# Scheme-bearing URL also accepted: http(s)://host:port[/path] — scheme overrides insecure flag
 ```
 
 **Check 3: Protocol matches endpoint**
@@ -275,7 +275,7 @@ Error: protocol must be one of: grpc, http/protobuf, http
 **Fix**:
 ```yaml
 otlp:
-  protocol: "grpc"  # or "http/protobuf"
+  protocol: "http/protobuf"  # or "grpc"
 ```
 
 ## Shutdown Issues
@@ -327,7 +327,7 @@ otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
 | No traces | `enabled: false` | Set `enabled: true` |
-| No traces | Wrong endpoint format | gRPC: `host:port`, HTTP: `http://host:port/path` |
+| No traces | Wrong endpoint format | Use `host:port` (both protocols) or `http(s)://host:port[/path]`; scheme overrides insecure flag |
 | Disconnected traces | `context.Background()` in handler | Pass context through |
 | Missing baggage | `propagators` missing `baggage` | Add `baggage` to propagators |
 | Validation error | Value out of range | Check docs for valid values |

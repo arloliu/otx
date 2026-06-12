@@ -2,10 +2,10 @@ package otx
 
 import (
 	"context"
-	"net/url"
 	"strings"
 	"time"
 
+	"github.com/arloliu/otx/internal/endpoint"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -103,48 +103,29 @@ func resolveTraceExporterParams(cfg *TelemetryConfig) exporterParams {
 
 func buildOTLPTraceExporter(ctx context.Context, params exporterParams) (sdktrace.SpanExporter, error) {
 	if params.Protocol == "http/protobuf" || params.Protocol == "http" {
-		opts := []otlptracehttp.Option{}
-		if endpoint, path := splitEndpointURL(params.Endpoint); endpoint != "" {
-			opts = append(opts, otlptracehttp.WithEndpoint(endpoint))
-			if path != "" {
-				opts = append(opts, otlptracehttp.WithURLPath(path))
-			}
-		} else {
-			opts = append(opts, otlptracehttp.WithEndpoint(params.Endpoint))
-		}
-
-		if len(params.Headers) > 0 {
-			opts = append(opts, otlptracehttp.WithHeaders(params.Headers))
-		}
-		if params.Timeout > 0 {
-			opts = append(opts, otlptracehttp.WithTimeout(params.Timeout))
-		}
-		if params.Insecure {
-			opts = append(opts, otlptracehttp.WithInsecure())
-		}
-		if params.Compression == "gzip" {
-			opts = append(opts, otlptracehttp.WithCompression(otlptracehttp.GzipCompression))
-		}
+		opts := buildHTTPOptions(
+			params,
+			otlptracehttp.WithEndpoint,
+			otlptracehttp.WithEndpointURL,
+			otlptracehttp.WithHeaders,
+			otlptracehttp.WithTimeout,
+			otlptracehttp.WithInsecure,
+			func() otlptracehttp.Option { return otlptracehttp.WithCompression(otlptracehttp.GzipCompression) },
+		)
 
 		return otlptrace.New(ctx, otlptracehttp.NewClient(opts...))
 	}
 
 	// Default to gRPC
-	opts := []otlptracegrpc.Option{
-		otlptracegrpc.WithEndpoint(params.Endpoint),
-	}
-	if len(params.Headers) > 0 {
-		opts = append(opts, otlptracegrpc.WithHeaders(params.Headers))
-	}
-	if params.Timeout > 0 {
-		opts = append(opts, otlptracegrpc.WithTimeout(params.Timeout))
-	}
-	if params.Insecure {
-		opts = append(opts, otlptracegrpc.WithInsecure())
-	}
-	if params.Compression == "gzip" {
-		opts = append(opts, otlptracegrpc.WithCompressor("gzip"))
-	}
+	opts := buildGRPCOptions(
+		params,
+		otlptracegrpc.WithEndpoint,
+		otlptracegrpc.WithEndpointURL,
+		otlptracegrpc.WithHeaders,
+		otlptracegrpc.WithTimeout,
+		otlptracegrpc.WithInsecure,
+		func() otlptracegrpc.Option { return otlptracegrpc.WithCompressor("gzip") },
+	)
 
 	return otlptrace.New(ctx, otlptracegrpc.NewClient(opts...))
 }
@@ -212,6 +193,7 @@ func buildOTLPLogExporter(ctx context.Context, params exporterParams) (sdklog.Ex
 	opts := buildGRPCOptions(
 		params,
 		otlploggrpc.WithEndpoint,
+		otlploggrpc.WithEndpointURL,
 		otlploggrpc.WithHeaders,
 		otlploggrpc.WithTimeout,
 		otlploggrpc.WithInsecure,
@@ -274,6 +256,7 @@ func buildOTLPMetricExporter(ctx context.Context, params exporterParams) (sdkmet
 	opts := buildGRPCOptions(
 		params,
 		otlpmetricgrpc.WithEndpoint,
+		otlpmetricgrpc.WithEndpointURL,
 		otlpmetricgrpc.WithHeaders,
 		otlpmetricgrpc.WithTimeout,
 		otlpmetricgrpc.WithInsecure,
@@ -324,18 +307,6 @@ func normalizeDuration(value time.Duration) time.Duration {
 	return value
 }
 
-func splitEndpointURL(raw string) (host string, path string) {
-	if raw == "" {
-		return "", ""
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || !isHTTPSScheme(parsed.Scheme) {
-		return "", ""
-	}
-
-	return parsed.Host, parsed.Path
-}
-
 func buildHTTPOptions[T any](
 	params exporterParams,
 	withEndpoint func(string) T,
@@ -346,7 +317,14 @@ func buildHTTPOptions[T any](
 	withCompression func() T,
 ) []T {
 	var opts []T
-	if parsed, err := url.Parse(params.Endpoint); err == nil && isHTTPSScheme(parsed.Scheme) {
+	// Scheme-overrides-Insecure precedence (OTel spec; mirrors zaplog/core.go):
+	// a scheme-bearing URL determines TLS via WithEndpointURL — the SDK derives
+	// insecurity from the scheme itself (http://→insecure, https://→secure), so
+	// the conflicting WithInsecure MUST NOT be appended for URL endpoints or it
+	// would override the scheme (options apply in order, last wins). For bare
+	// host:port endpoints the scheme is absent, so Insecure decides plaintext.
+	isURL := endpoint.IsHTTP(params.Endpoint)
+	if isURL {
 		opts = append(opts, withEndpointURL(params.Endpoint))
 	} else {
 		opts = append(opts, withEndpoint(params.Endpoint))
@@ -357,7 +335,7 @@ func buildHTTPOptions[T any](
 	if params.Timeout > 0 {
 		opts = append(opts, withTimeout(params.Timeout))
 	}
-	if params.Insecure {
+	if !isURL && params.Insecure {
 		opts = append(opts, withInsecure())
 	}
 	if params.Compression == "gzip" {
@@ -367,23 +345,38 @@ func buildHTTPOptions[T any](
 	return opts
 }
 
-func isHTTPSScheme(scheme string) bool {
-	switch strings.ToLower(scheme) {
-	case "http", "https":
-		return true
-	default:
-		return false
-	}
-}
-
 func buildGRPCOptions[T any](
 	params exporterParams,
 	withEndpoint func(string) T,
+	withEndpointURL func(string) T,
 	withHeaders func(map[string]string) T,
 	withTimeout func(time.Duration) T,
 	withInsecure func() T,
 	withCompression func() T,
 ) []T {
+	// Scheme-overrides-Insecure precedence (OTel spec; mirrors buildHTTPOptions):
+	// a scheme-bearing URL determines TLS via WithEndpointURL — the SDK derives
+	// insecurity from the scheme (http://→insecure, https://→secure; last option
+	// wins). For bare host:port endpoints the scheme is absent, so Insecure decides
+	// plaintext. WithInsecure MUST NOT be appended for URL endpoints or it would
+	// override the scheme (trace/metric: Insecure = scheme != "https";
+	// log: insecureFromScheme via setting[bool]).
+	isURL := endpoint.IsHTTP(params.Endpoint)
+	if isURL {
+		opts := []T{withEndpointURL(params.Endpoint)}
+		if len(params.Headers) > 0 {
+			opts = append(opts, withHeaders(params.Headers))
+		}
+		if params.Timeout > 0 {
+			opts = append(opts, withTimeout(params.Timeout))
+		}
+		if params.Compression == "gzip" {
+			opts = append(opts, withCompression())
+		}
+
+		return opts
+	}
+
 	opts := []T{withEndpoint(params.Endpoint)}
 	if len(params.Headers) > 0 {
 		opts = append(opts, withHeaders(params.Headers))

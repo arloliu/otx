@@ -63,8 +63,8 @@ telemetry:
   environment: "production"  # OTEL_DEPLOYMENT_ENVIRONMENT
   exporter:
     type: "otlp"  # OTEL_TRACES_EXPORTER
-    endpoint: "localhost:4317"  # OTEL_EXPORTER_OTLP_ENDPOINT
-    protocol: "grpc"  # OTEL_EXPORTER_OTLP_PROTOCOL
+    endpoint: "localhost:4318"  # OTEL_EXPORTER_OTLP_ENDPOINT
+    protocol: "http/protobuf"  # OTEL_EXPORTER_OTLP_PROTOCOL
   sampling:
     sampler: "parentbased_traceidratio"  # OTEL_TRACES_SAMPLER
     samplerArg: 1.0  # OTEL_TRACES_SAMPLER_ARG (sampling probability)
