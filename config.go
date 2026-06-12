@@ -140,6 +140,19 @@ type LogsConfig struct {
 	// In most cases, leave this empty and set OTLP.Endpoint instead.
 	// Only use this when logs need a different endpoint than other signals.
 	Endpoint string `yaml:"endpoint,omitempty" json:"endpoint,omitempty" env:"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"`
+
+	// Protocol overrides OTLP.Protocol for logs.
+	// Maps to OTEL_EXPORTER_OTLP_LOGS_PROTOCOL.
+	// Options: "grpc", "http/protobuf", "http".
+	// The otx/zaplog adapter is HTTP-only and requires "http/protobuf" (or the
+	// "http" alias); set this when the shared OTLP.Protocol is "grpc" but logs
+	// ship over zaplog's OTLP/HTTP exporter.
+	Protocol string `yaml:"protocol,omitempty" json:"protocol,omitempty" env:"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL" validate:"omitempty,oneof=grpc http/protobuf http"`
+
+	// MinLevel is the minimum zap level the otx/zaplog OTLP core emits.
+	// It gates log-export cost (e.g. "warn" ships only warn and above).
+	// Defaults to "info" when empty. Ignored by the SDK log pipeline.
+	MinLevel string `yaml:"minLevel,omitempty" json:"minLevel,omitempty" validate:"omitempty,oneof=debug info warn error dpanic panic fatal"`
 }
 
 // IsEnabled returns true if OTel log export is enabled.

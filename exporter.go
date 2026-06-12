@@ -185,6 +185,9 @@ func resolveLogExporterParams(cfg *TelemetryConfig) exporterParams {
 		if cfg.Logs.Endpoint != "" {
 			params.Endpoint = cfg.Logs.Endpoint
 		}
+		if cfg.Logs.Protocol != "" {
+			params.Protocol = cfg.Logs.Protocol
+		}
 	}
 
 	return params

@@ -165,7 +165,19 @@ func NewMeterProvider(ctx context.Context, cfg *TelemetryConfig) (*sdkmetric.Met
 // Shared Helpers
 // ============================================================================
 
+// BuildResource returns the OTel resource derived from cfg — the same resource
+// NewTracerProvider, NewLoggerProvider, and NewMeterProvider attach to their
+// providers. It is exported for advanced wiring that needs the resource
+// identity outside the standard providers (custom SDK components, the otx/zaplog
+// adapter), so logs and traces carry identical resource attributes and join in
+// the backend.
+func BuildResource(ctx context.Context, cfg *TelemetryConfig) (*resource.Resource, error) {
+	return buildResource(ctx, cfg)
+}
+
 // buildResource creates a common resource for all providers.
+//
+//nolint:revive // confusing-naming: BuildResource is the intentional exported wrapper.
 func buildResource(ctx context.Context, cfg *TelemetryConfig) (*resource.Resource, error) {
 	if cfg.ServiceName == "" {
 		return nil, ErrServiceNameRequired
