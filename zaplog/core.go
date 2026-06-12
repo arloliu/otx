@@ -1,0 +1,276 @@
+// Package zaplog adapts otx telemetry configuration to zapwire's OTLP/HTTP log
+// data plane. It builds a zapwire OTLP core and writer from a single
+// otx.TelemetryConfig, deriving the resource identity (service.name + resource
+// attributes) from the same otx.BuildResource the trace/metric providers use,
+// so logs and traces join on identical resource attributes in the backend.
+//
+// It also provides the InfoCtx-style, context-aware logging surface zapwire
+// deliberately leaves to the application layer (see Logger and Attach).
+//
+// # Quick start
+//
+//	core, w, err := zaplog.NewCore(ctx, cfg, zapcore.InfoLevel)
+//	if err != nil { ... }
+//	defer func() { _ = w.Sync(); _ = w.Close() }()
+//	log := zaplog.Logger{Logger: zap.New(core)}
+//	log.InfoCtx(ctx, "request handled")
+//
+// # Boundary
+//
+// otx owns the control plane (config, resource, providers, span context);
+// zapwire/otlp owns the data plane (encoder, core, async exporter). zaplog is
+// the single seam that derives the latter from the former. The dependency
+// direction is permanent: otx may depend on zapwire, never the reverse.
+package zaplog
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"time"
+
+	"github.com/arloliu/otx"
+	"github.com/arloliu/zapwire/otlp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
+
+const (
+	defaultEndpoint = "localhost:4317"
+	defaultProtocol = "grpc"
+
+	protocolHTTPProtobuf = "http/protobuf"
+	protocolHTTP         = "http"
+	protocolGRPC         = "grpc"
+
+	serviceNameKey = "service.name"
+)
+
+// errGRPCProtocol is the canonical error returned when the effective OTLP
+// protocol resolves to gRPC, which zaplog does not support. The message text
+// is pinned by the design spec (§3.2 rule 2); tests must match it exactly.
+var errGRPCProtocol = errors.New(
+	"zaplog requires logs protocol http/protobuf; set telemetry.logs.protocol, " +
+		"or use otx.NewLoggerProvider for gRPC",
+)
+
+// NewCore builds a zapwire OTLP core and its writer from otx telemetry config.
+//
+// The effective endpoint, protocol, TLS mode, headers, timeout, and compression
+// are resolved through the same wholesale + per-signal-overlay chain otx's SDK
+// log exporter uses: the base is cfg.GetOTLPConfig() (returned as-is when an
+// OTLP block is set, else converted from the deprecated Exporter block), and
+// Logs.Endpoint / Logs.Protocol overlay it per field. The resolved transport
+// settings become config-derived otlp options applied BEFORE the caller's opts,
+// so an explicit caller option always wins.
+//
+// zaplog is OTLP/HTTP only: if the effective protocol resolves to grpc (the
+// shared default), NewCore returns an error directing the caller to set
+// telemetry.logs.protocol or use otx.NewLoggerProvider for gRPC.
+//
+// Resource identity is translated from otx.BuildResource(ctx, cfg):
+// service.name feeds otlp.WithServiceName and is excluded from the remaining
+// resource attributes (which feed otlp.WithResource) so exactly one
+// service.name is emitted.
+//
+// When level is nil, NewCore resolves it to cfg.Logs.MinLevel (a zap level
+// string) and then to zapcore.InfoLevel — it never passes nil to the otlp core,
+// whose Check would panic. Pass a *zap.AtomicLevel for a runtime cost dial.
+//
+// The caller owns the returned *otlp.Writer and must Close it; the recommended
+// shutdown is w.Sync() then w.Close().
+func NewCore(
+	ctx context.Context,
+	cfg *otx.TelemetryConfig,
+	level zapcore.LevelEnabler,
+	opts ...otlp.Option,
+) (zapcore.Core, *otlp.Writer, error) {
+	base := cfg.GetOTLPConfig()
+
+	protocol := effectiveProtocol(cfg, base)
+	if protocol == protocolGRPC {
+		return nil, nil, errGRPCProtocol
+	}
+
+	endpoint := buildEndpoint(effectiveEndpoint(cfg, base), base.IsInsecure())
+
+	resOpts, err := resourceOptions(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	enabler, err := resolveLevel(cfg, level)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Config-derived options FIRST, caller opts AFTER (later wins; design §3.2).
+	merged := make([]otlp.Option, 0, len(resOpts)+4+len(opts))
+	merged = append(merged, resOpts...)
+	if len(base.Headers) > 0 {
+		merged = append(merged, otlp.WithHeaders(base.Headers))
+	}
+	if base.Timeout > 0 {
+		merged = append(merged, otlp.WithTimeout(normalizeDuration(base.Timeout)))
+	}
+	if base.Compression == "gzip" {
+		merged = append(merged, otlp.WithCompression(otlp.Gzip))
+	}
+	merged = append(merged, opts...)
+
+	return otlp.NewCore(endpoint, enabler, merged...)
+}
+
+// effectiveEndpoint applies the Logs.Endpoint overlay over the wholesale base,
+// defaulting to localhost:4317 when neither is set (programmatic configs carry
+// no struct-tag defaults).
+func effectiveEndpoint(cfg *otx.TelemetryConfig, base *otx.OTLPConfig) string {
+	if cfg.Logs != nil && cfg.Logs.Endpoint != "" {
+		return cfg.Logs.Endpoint
+	}
+	if base.Endpoint != "" {
+		return base.Endpoint
+	}
+
+	return defaultEndpoint
+}
+
+// effectiveProtocol applies the Logs.Protocol overlay over the wholesale base,
+// defaulting to grpc (matching otx's baseExporterParams) — which NewCore then
+// rejects, keeping the two pipelines config-compatible.
+func effectiveProtocol(cfg *otx.TelemetryConfig, base *otx.OTLPConfig) string {
+	if cfg.Logs != nil && cfg.Logs.Protocol != "" {
+		return normalizeProtocol(cfg.Logs.Protocol)
+	}
+	if base.Protocol != "" {
+		return normalizeProtocol(base.Protocol)
+	}
+
+	return defaultProtocol
+}
+
+// normalizeProtocol folds the "http" alias into "http/protobuf"; grpc and any
+// unrecognized value pass through (validation rejects unrecognized at load).
+func normalizeProtocol(p string) string {
+	if p == protocolHTTP {
+		return protocolHTTPProtobuf
+	}
+
+	return p
+}
+
+// buildEndpoint maps an otx host:port (or full URL) to the http(s):// form
+// zapwire requires. A bare host:port with insecure TLS becomes http://, else
+// https://; an endpoint already carrying an http/https scheme passes through
+// unchanged (zapwire validates it and appends /v1/logs to empty paths). No
+// 4317->4318 port rewriting (design §3.2).
+func buildEndpoint(endpoint string, insecure bool) string {
+	if u, err := url.Parse(endpoint); err == nil && isHTTPScheme(u.Scheme) {
+		return endpoint
+	}
+	if insecure {
+		return "http://" + endpoint
+	}
+
+	return "https://" + endpoint
+}
+
+// isHTTPScheme guards against url.Parse's colon trap: url.Parse("localhost:4317")
+// yields Scheme="localhost", so only an exact http/https scheme is a pass-through.
+func isHTTPScheme(scheme string) bool {
+	return scheme == protocolHTTP || scheme == "https"
+}
+
+// normalizeDuration mirrors otx's exporter.go: a sub-millisecond value comes
+// from the numeric OTEL_EXPORTER_OTLP_TIMEOUT env form (interpreted as
+// milliseconds per the OTel spec), so it is scaled up to match the SDK path.
+func normalizeDuration(value time.Duration) time.Duration {
+	if value > 0 && value < time.Millisecond {
+		return value * time.Millisecond //nolint:durationcheck // numeric env interpreted as ms
+	}
+
+	return value
+}
+
+// resolveLevel resolves the effective LevelEnabler: an explicit non-nil level
+// wins; else cfg.Logs.MinLevel (a zap level string); else zapcore.InfoLevel.
+// Never returns nil — the otlp core stores the enabler directly and a nil would
+// panic in Check.
+func resolveLevel(cfg *otx.TelemetryConfig, level zapcore.LevelEnabler) (zapcore.LevelEnabler, error) {
+	if level != nil {
+		return level, nil
+	}
+	if cfg.Logs != nil && cfg.Logs.MinLevel != "" {
+		lvl, err := zapcore.ParseLevel(cfg.Logs.MinLevel)
+		if err != nil {
+			return nil, fmt.Errorf("zaplog: invalid logs minLevel %q: %w", cfg.Logs.MinLevel, err)
+		}
+
+		return lvl, nil
+	}
+
+	return zapcore.InfoLevel, nil
+}
+
+// resourceOptions translates otx.BuildResource into zapwire options:
+// service.name -> WithServiceName, every other attribute -> WithResource as a
+// typed zap.Field. service.name is excluded from WithResource so exactly one
+// service.name is emitted (design §3.3).
+func resourceOptions(ctx context.Context, cfg *otx.TelemetryConfig) ([]otlp.Option, error) {
+	res, err := otx.BuildResource(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	var serviceName string
+	var fields []zap.Field
+	for _, kv := range res.Attributes() {
+		if string(kv.Key) == serviceNameKey {
+			serviceName = kv.Value.AsString()
+
+			continue
+		}
+		if f, ok := attrToField(kv); ok {
+			fields = append(fields, f)
+		}
+	}
+
+	opts := make([]otlp.Option, 0, 2)
+	if serviceName != "" {
+		opts = append(opts, otlp.WithServiceName(serviceName))
+	}
+	if len(fields) > 0 {
+		opts = append(opts, otlp.WithResource(fields...))
+	}
+
+	return opts, nil
+}
+
+// attrToField converts an OTel attribute.KeyValue to a typed zap.Field across
+// the scalar and slice forms otx may produce (today only STRING, but the rest
+// are handled for forward safety). Unknown/empty types are skipped.
+func attrToField(kv attribute.KeyValue) (zap.Field, bool) {
+	key := string(kv.Key)
+	switch kv.Value.Type() {
+	case attribute.STRING:
+		return zap.String(key, kv.Value.AsString()), true
+	case attribute.BOOL:
+		return zap.Bool(key, kv.Value.AsBool()), true
+	case attribute.INT64:
+		return zap.Int64(key, kv.Value.AsInt64()), true
+	case attribute.FLOAT64:
+		return zap.Float64(key, kv.Value.AsFloat64()), true
+	case attribute.STRINGSLICE:
+		return zap.Strings(key, kv.Value.AsStringSlice()), true
+	case attribute.BOOLSLICE:
+		return zap.Bools(key, kv.Value.AsBoolSlice()), true
+	case attribute.INT64SLICE:
+		return zap.Int64s(key, kv.Value.AsInt64Slice()), true
+	case attribute.FLOAT64SLICE:
+		return zap.Float64s(key, kv.Value.AsFloat64Slice()), true
+	default:
+		return zap.Field{}, false
+	}
+}
