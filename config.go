@@ -63,11 +63,11 @@ type OTLPConfig struct {
 	// Maps to OTEL_EXPORTER_OTLP_ENDPOINT.
 	//
 	// Format depends on protocol:
-	//   - gRPC: "host:port" (e.g., "localhost:4317"). Do NOT include scheme.
 	//   - HTTP: Full URL with scheme (e.g., "http://localhost:4318/v1/traces").
+	//   - gRPC: "host:port" (e.g., "localhost:4317"). Do NOT include scheme.
 	//
 	// Using the wrong format may cause connection failures or unexpected behavior.
-	Endpoint string `yaml:"endpoint" json:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT" default:"localhost:4317"`
+	Endpoint string `yaml:"endpoint" json:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT" default:"localhost:4318"`
 
 	// Insecure disables TLS for the OTLP connection.
 	// Maps to OTEL_EXPORTER_OTLP_INSECURE.
@@ -81,7 +81,7 @@ type OTLPConfig struct {
 	// Protocol determines the OTLP transport protocol.
 	// Maps to OTEL_EXPORTER_OTLP_PROTOCOL.
 	// Options: "grpc", "http/protobuf", "http".
-	Protocol string `yaml:"protocol" json:"protocol" env:"OTEL_EXPORTER_OTLP_PROTOCOL" default:"grpc" validate:"oneof=grpc http/protobuf http"`
+	Protocol string `yaml:"protocol" json:"protocol" env:"OTEL_EXPORTER_OTLP_PROTOCOL" default:"http/protobuf" validate:"oneof=grpc http/protobuf http"`
 
 	// Timeout is the timeout for exporter operations.
 	// Maps to OTEL_EXPORTER_OTLP_TIMEOUT.
@@ -330,7 +330,7 @@ func (c *TelemetryConfig) GetTracesExporter() string {
 // Priority: Traces.Endpoint > OTLP.Endpoint > Exporter.Endpoint (deprecated).
 func (c *TelemetryConfig) GetOTLPEndpoint() string {
 	if c == nil {
-		return "localhost:4317"
+		return "localhost:4318"
 	}
 	if c.Traces != nil && c.Traces.Endpoint != "" {
 		return c.Traces.Endpoint
@@ -342,7 +342,7 @@ func (c *TelemetryConfig) GetOTLPEndpoint() string {
 		return c.Exporter.Endpoint
 	}
 
-	return "localhost:4317"
+	return "localhost:4318"
 }
 
 // GetOTLPConfig returns the effective OTLP config.

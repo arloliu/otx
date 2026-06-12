@@ -80,7 +80,7 @@ Instead of hardcoding configuration, use environment variables:
 ```bash
 export OTX_ENABLED=true
 export OTEL_SERVICE_NAME=my-service
-export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317
+export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318
 ```
 
 ```go
@@ -95,9 +95,11 @@ the lightweight `otx/zaplog` adapter instead of the SDK log bridge. **Routing
 rule:** zap services use the zaplog path (zap → zapwire OTLP/HTTP, single encode
 pass, no SDK log bridge or gRPC on the log data path); `otx.NewLoggerProvider` stays for non-zap
 paths (slog bridge, the direct OTel log API) or when gRPC OTLP for logs is a hard
-requirement. Never run both for one logger. zaplog derives its resource identity
-from the same config as your traces, so logs and traces join in the backend. See
-the [Zap Logging](zap-logging.md) guide.
+requirement. Never run both for one logger. zaplog is HTTP-only and works with the
+default `http/protobuf` protocol out of the box — no extra `logs.protocol` override
+needed unless you explicitly set `OTLP.Protocol` to `grpc`. zaplog derives its
+resource identity from the same config as your traces, so logs and traces join in
+the backend. See the [Zap Logging](zap-logging.md) guide.
 
 ## Next Steps
 

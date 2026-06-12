@@ -46,18 +46,29 @@ func TestNewCore_RejectsGRPC(t *testing.T) {
 	assert.Nil(t, w)
 }
 
-func TestNewCore_RejectsGRPC_DefaultProtocol(t *testing.T) {
-	// Empty effective protocol defaults to grpc and is rejected with the exact
-	// spec-pinned message (design §3.2 rule 2).
+func TestNewCore_DefaultProtocolWorks(t *testing.T) {
+	// Empty effective protocol now defaults to http/protobuf (shared default
+	// flipped to http/protobuf post-review; spec-aligned). NewCore must succeed
+	// and produce a working writer that ships a record to a real HTTP server.
+	cs := newCaptureServer(t)
+
 	cfg := &otx.TelemetryConfig{
 		Enabled:     boolPtr(true),
 		ServiceName: "svc",
-		OTLP:        &otx.OTLPConfig{Endpoint: "collector:4317"},
-		Logs:        &otx.LogsConfig{Enabled: boolPtr(true)},
+		// Protocol is intentionally omitted — resolves to defaultProtocol = "http/protobuf".
+		OTLP: &otx.OTLPConfig{Endpoint: cs.Server.URL, Insecure: boolPtr(true)},
+		Logs: &otx.LogsConfig{Enabled: boolPtr(true)},
 	}
 
-	_, _, err := NewCore(context.Background(), cfg, zapcore.InfoLevel)
-	require.EqualError(t, err, grpcRejectionMsg)
+	core, w, err := NewCore(context.Background(), cfg, zapcore.InfoLevel)
+	require.NoError(t, err, "default http/protobuf protocol must not be rejected")
+	require.NotNil(t, core)
+	require.NotNil(t, w)
+	t.Cleanup(func() { _ = w.Close() })
+
+	zap.New(core).Info("default-proto-test")
+	require.NoError(t, w.Sync())
+	assert.Len(t, cs.allRecords(), 1)
 }
 
 func TestNewCore_InvalidMinLevel(t *testing.T) {

@@ -368,8 +368,8 @@ All configuration options can be set via environment variables. OTX follows the 
 | `OTEL_SERVICE_VERSION` | Service version (e.g., git commit, semver) | - |
 | `OTEL_DEPLOYMENT_ENVIRONMENT` | Deployment environment (production, development) | `development` |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (comma-separated key=value) | - |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint | `localhost:4317` |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc`, `http/protobuf`, `http` | `grpc` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint | `localhost:4318` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc`, `http/protobuf`, `http` | `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Custom headers (comma-separated key=value) | - |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | Exporter timeout | `10s` |
 | `OTEL_EXPORTER_OTLP_INSECURE` | Disable TLS for OTLP connection | `true` |

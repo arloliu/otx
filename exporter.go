@@ -36,8 +36,8 @@ type exporterParams struct {
 func baseExporterParams(cfg *TelemetryConfig) exporterParams {
 	params := exporterParams{
 		Type:     "otlp",
-		Protocol: "grpc",
-		Endpoint: "localhost:4317",
+		Protocol: "http/protobuf",
+		Endpoint: "localhost:4318",
 		Timeout:  10 * time.Second,
 		Insecure: true,
 	}
