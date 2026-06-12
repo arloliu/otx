@@ -84,8 +84,9 @@ you here.
 
 ### Endpoint mapping
 
-otx endpoints are gRPC-style `host:port`; zaplog maps them to the `http(s)://`
-form zapwire needs:
+otx endpoints accept `host:port` (canonical, both protocols) or a scheme-bearing
+`http(s)://` URL; zaplog maps bare endpoints to the `http(s)://` form zapwire
+needs:
 
 - bare `host:port` + `insecure: true` → `http://host:port`
 - bare `host:port` + `insecure: false` → `https://host:port`

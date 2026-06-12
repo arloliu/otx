@@ -27,10 +27,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"time"
 
 	"github.com/arloliu/otx"
+	"github.com/arloliu/otx/internal/endpoint"
 	"github.com/arloliu/zapwire/otlp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
@@ -94,7 +94,10 @@ func NewCore(
 		return nil, nil, errGRPCProtocol
 	}
 
-	endpoint := buildEndpoint(effectiveEndpoint(cfg, base), base.IsInsecure())
+	resolvedEndpoint, err := buildEndpoint(effectiveEndpoint(cfg, base), base.IsInsecure())
+	if err != nil {
+		return nil, nil, err
+	}
 
 	resOpts, err := resourceOptions(ctx, cfg)
 	if err != nil {
@@ -120,7 +123,7 @@ func NewCore(
 	}
 	merged = append(merged, opts...)
 
-	return otlp.NewCore(endpoint, enabler, merged...)
+	return otlp.NewCore(resolvedEndpoint, enabler, merged...)
 }
 
 // effectiveEndpoint applies the Logs.Endpoint overlay over the wholesale base,
@@ -162,24 +165,32 @@ func normalizeProtocol(p string) string {
 }
 
 // buildEndpoint maps an otx host:port (or full URL) to the http(s):// form
-// zapwire requires. A bare host:port with insecure TLS becomes http://, else
-// https://; an endpoint already carrying an http/https scheme passes through
-// unchanged (zapwire validates it and appends /v1/logs to empty paths).
-func buildEndpoint(endpoint string, insecure bool) string {
-	if u, err := url.Parse(endpoint); err == nil && isHTTPScheme(u.Scheme) {
-		return endpoint
+// zapwire requires. It classifies via the shared endpoint.Classify so a
+// programmatic config (which bypasses LoadConfig's ValidateEndpoints) receives
+// the same actionable validation as a loaded config:
+//
+//   - invalid scheme (grpc://, tcp://, …) → the classifier's actionable error,
+//     instead of silently prefixing it into garbage like "https://grpc://h"
+//     and deferring to a dial failure at export time;
+//   - bare host:port → prefixed http:// when insecure, else https://;
+//   - http/https URL → passed through unchanged (zapwire validates it and
+//     appends /v1/logs to an empty path).
+//
+// Classify avoids url.Parse's colon trap (url.Parse("localhost:4317") yields
+// Scheme="localhost") and is case-insensitive on the scheme.
+func buildEndpoint(ep string, insecure bool) (string, error) {
+	kind, err := endpoint.Classify(ep)
+	if err != nil {
+		return "", err
+	}
+	if kind == endpoint.KindHTTP || kind == endpoint.KindHTTPS {
+		return ep, nil
 	}
 	if insecure {
-		return "http://" + endpoint
+		return "http://" + ep, nil
 	}
 
-	return "https://" + endpoint
-}
-
-// isHTTPScheme guards against url.Parse's colon trap: url.Parse("localhost:4317")
-// yields Scheme="localhost", so only an exact http/https scheme is a pass-through.
-func isHTTPScheme(scheme string) bool {
-	return scheme == protocolHTTP || scheme == "https"
+	return "https://" + ep, nil
 }
 
 // normalizeDuration mirrors otx's exporter.go: a sub-millisecond value comes

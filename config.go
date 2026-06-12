@@ -2,9 +2,12 @@
 package otx
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/arloliu/otx/internal/endpoint"
 )
 
 // TelemetryConfig configures the OpenTelemetry system.
@@ -62,11 +65,12 @@ type OTLPConfig struct {
 	// Endpoint is the OTLP collector endpoint.
 	// Maps to OTEL_EXPORTER_OTLP_ENDPOINT.
 	//
-	// Format depends on protocol:
-	//   - HTTP: Full URL with scheme (e.g., "http://localhost:4318/v1/traces").
-	//   - gRPC: "host:port" (e.g., "localhost:4317"). Do NOT include scheme.
-	//
-	// Using the wrong format may cause connection failures or unexpected behavior.
+	// Accepted forms (both protocols):
+	//   - Bare "host:port" (e.g., "localhost:4318") — canonical form; TLS
+	//     controlled by the Insecure flag.
+	//   - Scheme-bearing URL (e.g., "https://collector:4317") — scheme takes
+	//     precedence over Insecure; https:// is always TLS, http:// is always
+	//     plain. Any other scheme is rejected at load time.
 	Endpoint string `yaml:"endpoint" json:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT" default:"localhost:4318"`
 
 	// Insecure disables TLS for the OTLP connection.
@@ -367,6 +371,59 @@ func (c *TelemetryConfig) GetOTLPConfig() *OTLPConfig {
 	}
 
 	return &OTLPConfig{}
+}
+
+// validateEndpoint checks that a single endpoint value is valid.
+// An empty value is always valid (defaults apply).
+// Valid non-empty forms: bare host:port, http:// URL, https:// URL.
+// Any other scheme (grpc://, tcp://, unix://, …) is rejected.
+func validateEndpoint(fieldName, value string) error {
+	if value == "" {
+		return nil
+	}
+	if _, err := endpoint.Classify(value); err != nil {
+		return fmt.Errorf("field %s: %w", fieldName, err)
+	}
+
+	return nil
+}
+
+// ValidateEndpoints validates the endpoint values in the config.
+// It is called automatically by LoadConfig and ParseConfig after struct-tag
+// validation passes. Endpoint fields use a post-load check because the
+// scheme rule (bare / http / https only) cannot be expressed as a built-in
+// go-playground/validator tag.
+func (c *TelemetryConfig) ValidateEndpoints() error {
+	type field struct {
+		name  string
+		value string
+	}
+
+	var fields []field
+
+	if c.OTLP != nil {
+		fields = append(fields, field{"otlp.endpoint", c.OTLP.Endpoint})
+	}
+	if c.Traces != nil {
+		fields = append(fields, field{"traces.endpoint", c.Traces.Endpoint})
+	}
+	if c.Logs != nil {
+		fields = append(fields, field{"logs.endpoint", c.Logs.Endpoint})
+	}
+	if c.Metrics != nil {
+		fields = append(fields, field{"metrics.endpoint", c.Metrics.Endpoint})
+	}
+	if c.Exporter != nil {
+		fields = append(fields, field{"exporter.endpoint", c.Exporter.Endpoint})
+	}
+
+	for _, f := range fields {
+		if err := validateEndpoint(f.name, f.value); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // boolPtr returns a pointer to the given boolean value.

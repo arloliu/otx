@@ -62,12 +62,12 @@ You can override the OTLP endpoint for specific signals:
 
 ```bash
 # Shared endpoint
-export OTEL_EXPORTER_OTLP_ENDPOINT=collector:4317
+export OTEL_EXPORTER_OTLP_ENDPOINT=collector:4318
 
 # Signal-specific overrides
-export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=traces-collector:4317
-export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=logs-collector:4317
-export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=metrics-collector:4317
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=traces-collector:4318
+export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=logs-collector:4318
+export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=metrics-collector:4318
 ```
 
 ## Sampling Strategies
@@ -88,6 +88,32 @@ sampling:
   samplerArg: 0.1  # 10% of root spans
 ```
 
+## Endpoint forms
+
+Every endpoint field (`otlp.endpoint`, `traces.endpoint`, `logs.endpoint`,
+`metrics.endpoint`, and the deprecated `exporter.endpoint`) accepts exactly two
+forms:
+
+| Form | Example | Notes |
+|------|---------|-------|
+| Bare `host:port` | `localhost:4318`, `[::1]:4318`, `collector` | Canonical. TLS controlled by `insecure`. |
+| `http://` or `https://` URL | `https://collector:4318/v1/traces` | Scheme overrides `insecure` — `https://` is always TLS, `http://` is always plain. Path is preserved. |
+
+Any other scheme (`grpc://`, `tcp://`, `unix://`, …) is rejected at load time
+with an actionable error:
+
+```
+field otlp.endpoint: invalid endpoint scheme "grpc": transport is selected by
+protocol, not the endpoint scheme; use host:port or an http(s):// URL
+```
+
+An empty endpoint is valid; the default (`localhost:4318`) applies.
+
+**Scheme-overrides-insecure precedence:** when a URL scheme is provided, it
+wins over the `insecure` flag. `https://host:4318` is always TLS regardless of
+`insecure: true`; `http://host:4318` is always plain regardless of
+`insecure: false`.
+
 ## Validation
 
 OTX validates configuration at load time:
@@ -99,5 +125,6 @@ OTX validates configuration at load time:
 - `exporter`: Must be `otlp`, `console`, `stdout`, or `none`
 - `timeout`: Must be non-negative
 - `interval`: Must be positive
+- Endpoint fields: must be bare `host:port` or an `http(s)://` URL (see above)
 
 Invalid configuration will return an error from `LoadConfig` or `ParseConfig`.

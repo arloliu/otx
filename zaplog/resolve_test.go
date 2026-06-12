@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/arloliu/otx"
+	"github.com/arloliu/otx/internal/endpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
@@ -129,7 +130,148 @@ func TestBuildEndpoint_Scheme(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, buildEndpoint(tt.endpoint, tt.insecure))
+			got, err := buildEndpoint(tt.endpoint, tt.insecure)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestBuildEndpoint_SchemeOverridesInsecure pins the scheme-overrides-insecure
+// precedence rule from the design spec.
+func TestBuildEndpoint_SchemeOverridesInsecure(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		insecure bool
+		want     string
+	}{
+		// bare + Insecure=true  → http://
+		{name: "bare + insecure=true -> http", endpoint: "h:4318", insecure: true, want: "http://h:4318"},
+		// bare + Insecure=false → https://
+		{name: "bare + insecure=false -> https", endpoint: "h:4318", insecure: false, want: "https://h:4318"},
+		// https:// + Insecure=true → scheme wins (stays https)
+		{
+			name:     "https + insecure=true -> stays https",
+			endpoint: "https://h:4318", insecure: true, want: "https://h:4318",
+		},
+		// http:// + Insecure=false → scheme wins (stays http)
+		{
+			name:     "http + insecure=false -> stays http",
+			endpoint: "http://h:4318", insecure: false, want: "http://h:4318",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildEndpoint(tt.endpoint, tt.insecure)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestBuildEndpoint_InvalidScheme pins that an invalid endpoint scheme surfaces
+// the classifier's actionable error instead of being prefixed into garbage
+// (e.g. "https://grpc://h"). This is the programmatic-config validation seam
+// (NewCore propagates this error; design finding P0 #2).
+func TestBuildEndpoint_InvalidScheme(t *testing.T) {
+	for _, ep := range []string{"grpc://h:4317", "tcp://h:1", "GRPC://h:4317"} {
+		t.Run(ep, func(t *testing.T) {
+			got, err := buildEndpoint(ep, true)
+			require.Error(t, err)
+			assert.Empty(t, got)
+			assert.Contains(t, err.Error(), "invalid endpoint scheme")
+			assert.Contains(t, err.Error(), "transport is selected by protocol")
+		})
+	}
+}
+
+// TestSharedClassifier_Regression pins that the shared endpoint.Classify helper
+// agrees with buildEndpoint's classification for bare vs URL inputs, ensuring
+// no divergence between exporter.go, zaplog, and the new validation path.
+func TestSharedClassifier_Regression(t *testing.T) {
+	tests := []struct {
+		name    string
+		ep      string
+		wantURL bool // endpoint.IsHTTP expected result
+	}{
+		{name: "bare localhost", ep: "localhost:4318", wantURL: false},
+		{name: "bare IPv6", ep: "[::1]:4318", wantURL: false},
+		{name: "http URL", ep: "http://h:4318", wantURL: true},
+		{name: "https URL", ep: "https://h:4318", wantURL: true},
+		{name: "http URL with path", ep: "http://h:4318/v1/logs", wantURL: true},
+		{name: "empty", ep: "", wantURL: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantURL, endpoint.IsHTTP(tt.ep),
+				"endpoint.IsHTTP(%q) disagreed with expected value", tt.ep)
+		})
+	}
+}
+
+// TestResolveExporterParams_EndpointClassification verifies that the SDK-level
+// exporter param resolution (logs, traces, metrics) classifies bare vs URL
+// endpoints the same way the shared classifier does — pinning that refactoring
+// the internals to use the helper cannot silently diverge.
+func TestResolveExporterParams_EndpointClassification(t *testing.T) {
+	// We test the observable: effectiveEndpoint returns the value as-is, and
+	// buildEndpoint prepends a scheme iff endpoint.IsHTTP is false.
+	type want struct {
+		endpoint string
+		isURL    bool
+	}
+	tests := []struct {
+		name     string
+		logsEp   string
+		insecure bool
+		want     want
+	}{
+		{
+			name:     "bare endpoint insecure -> http://",
+			logsEp:   "collector:4318",
+			insecure: true,
+			want:     want{"http://collector:4318", false},
+		},
+		{
+			name:     "bare endpoint secure -> https://",
+			logsEp:   "collector:4318",
+			insecure: false,
+			want:     want{"https://collector:4318", false},
+		},
+		{
+			name:     "http URL passes through",
+			logsEp:   "http://collector:4318/v1/logs",
+			insecure: false,
+			want:     want{"http://collector:4318/v1/logs", true},
+		},
+		{
+			name:     "https URL passes through (insecure ignored)",
+			logsEp:   "https://collector:4318",
+			insecure: true,
+			want:     want{"https://collector:4318", true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &otx.TelemetryConfig{
+				OTLP: &otx.OTLPConfig{
+					Endpoint: tt.logsEp,
+					Insecure: boolPtr(tt.insecure),
+				},
+			}
+			base := cfg.GetOTLPConfig()
+			ep := effectiveEndpoint(cfg, base)
+			// The shared classifier agrees with what buildEndpoint will do.
+			assert.Equal(t, tt.want.isURL, endpoint.IsHTTP(ep),
+				"classifier disagreed for %q", ep)
+			// buildEndpoint produces the expected final URL.
+			built, err := buildEndpoint(ep, base.IsInsecure())
+			require.NoError(t, err)
+			assert.Equal(t, tt.want.endpoint, built)
 		})
 	}
 }

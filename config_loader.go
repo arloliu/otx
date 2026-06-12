@@ -13,6 +13,10 @@ func LoadConfig(path string) (*TelemetryConfig, error) {
 	if err := fuda.LoadFile(path, &cfg); err != nil {
 		return nil, err
 	}
+	// Post-load endpoint-scheme validation (cannot be expressed as a struct tag).
+	if err := cfg.ValidateEndpoints(); err != nil {
+		return nil, err
+	}
 
 	return &cfg, nil
 }
@@ -24,6 +28,10 @@ func ParseConfig(data []byte) (*TelemetryConfig, error) {
 	var cfg TelemetryConfig
 	// fuda.LoadBytes handles parsing, env vars, defaults, and validation
 	if err := fuda.LoadBytes(data, &cfg); err != nil {
+		return nil, err
+	}
+	// Post-load endpoint-scheme validation (cannot be expressed as a struct tag).
+	if err := cfg.ValidateEndpoints(); err != nil {
 		return nil, err
 	}
 

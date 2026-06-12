@@ -46,6 +46,32 @@ func TestNewCore_RejectsGRPC(t *testing.T) {
 	assert.Nil(t, w)
 }
 
+func TestNewCore_RejectsInvalidEndpointScheme(t *testing.T) {
+	// A hand-built config bypasses LoadConfig's ValidateEndpoints, so NewCore is
+	// the only validation seam. An invalid endpoint scheme (grpc://) must surface
+	// the classifier's actionable error rather than being prefixed into garbage
+	// ("https://grpc://collector:4317") and deferred to a dial failure. Protocol
+	// is http/protobuf so the grpc-protocol guard does not short-circuit first —
+	// the endpoint check must be what rejects this.
+	cfg := &otx.TelemetryConfig{
+		Enabled:     boolPtr(true),
+		ServiceName: "svc",
+		OTLP: &otx.OTLPConfig{
+			Endpoint: "grpc://collector:4317",
+			Protocol: "http/protobuf",
+			Insecure: boolPtr(true),
+		},
+		Logs: &otx.LogsConfig{Enabled: boolPtr(true)},
+	}
+
+	core, w, err := NewCore(context.Background(), cfg, zapcore.InfoLevel)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid endpoint scheme "grpc"`)
+	assert.Contains(t, err.Error(), "transport is selected by protocol")
+	assert.Nil(t, core)
+	assert.Nil(t, w)
+}
+
 func TestNewCore_DefaultProtocolWorks(t *testing.T) {
 	// Empty effective protocol now defaults to http/protobuf (shared default
 	// flipped to http/protobuf post-review; spec-aligned). NewCore must succeed
