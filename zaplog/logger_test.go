@@ -69,18 +69,18 @@ func TestNew_NilBase(t *testing.T) {
 	assert.Equal(t, "otlp-only", recs[0].GetBody().GetStringValue())
 }
 
-// TestNew_PropagatesNewCoreError verifies that a gRPC-protocol config causes
-// New to return the pinned error, a zero Logger, and a nil Writer.
+// TestNew_PropagatesNewCoreError verifies that a NewCore error (e.g. invalid
+// service name) propagates through New as a zero Logger and nil Writer.
 func TestNew_PropagatesNewCoreError(t *testing.T) {
 	cfg := &otx.TelemetryConfig{
 		Enabled:     boolPtr(true),
-		ServiceName: "svc",
-		OTLP:        &otx.OTLPConfig{Endpoint: "collector:4317", Protocol: "grpc"},
+		ServiceName: "", // missing service name → ErrServiceNameRequired
+		OTLP:        &otx.OTLPConfig{Endpoint: "collector:4318", Protocol: "http/protobuf", Insecure: boolPtr(true)},
 		Logs:        &otx.LogsConfig{Enabled: boolPtr(true)},
 	}
 
 	got, w, err := New(context.Background(), cfg, nil, zapcore.InfoLevel)
-	require.EqualError(t, err, grpcRejectionMsg)
+	require.Error(t, err)
 	require.Nil(t, got.Logger)
 	require.Nil(t, w)
 }

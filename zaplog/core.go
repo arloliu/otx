@@ -1,8 +1,9 @@
-// Package zaplog adapts otx telemetry configuration to zapwire's OTLP/HTTP log
-// data plane. It builds a zapwire OTLP core and writer from a single
-// otx.TelemetryConfig, deriving the resource identity (service.name + resource
-// attributes) from the same otx.BuildResource the trace/metric providers use,
-// so logs and traces join on identical resource attributes in the backend.
+// Package zaplog adapts otx telemetry configuration to zapwire's OTLP log
+// data plane (HTTP or gRPC). It builds a zapwire OTLP core and writer from a
+// single otx.TelemetryConfig, deriving the resource identity (service.name +
+// resource attributes) from the same otx.BuildResource the trace/metric
+// providers use, so logs and traces join on identical resource attributes in
+// the backend.
 //
 // It also provides the InfoCtx-style, context-aware logging surface zapwire
 // deliberately leaves to the application layer (see Logger and Attach).
@@ -25,8 +26,8 @@ package zaplog
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/arloliu/otx"
@@ -38,22 +39,19 @@ import (
 )
 
 const (
-	defaultEndpoint = "localhost:4318"
-	defaultProtocol = "http/protobuf"
+	// defaultEndpointHTTP is the default OTLP endpoint for HTTP/protobuf, per the
+	// OTel spec recommendation for OTLP/HTTP.
+	defaultEndpointHTTP = "localhost:4318"
+	// defaultEndpointGRPC is the default OTLP endpoint for gRPC, per the OTel
+	// spec recommendation for OTLP/gRPC.
+	defaultEndpointGRPC = "localhost:4317"
+	defaultProtocol     = "http/protobuf"
 
 	protocolHTTPProtobuf = "http/protobuf"
 	protocolHTTP         = "http"
 	protocolGRPC         = "grpc"
 
 	serviceNameKey = "service.name"
-)
-
-// errGRPCProtocol is the canonical error returned when the effective OTLP
-// protocol resolves to gRPC, which zaplog does not support. The message text
-// is pinned by the design spec (§3.2 rule 2); tests must match it exactly.
-var errGRPCProtocol = errors.New(
-	"zaplog requires logs protocol http/protobuf; set telemetry.logs.protocol, " +
-		"or use otx.NewLoggerProvider for gRPC",
 )
 
 // NewCore builds a zapwire OTLP core and its writer from otx telemetry config.
@@ -66,9 +64,16 @@ var errGRPCProtocol = errors.New(
 // settings become config-derived otlp options applied BEFORE the caller's opts,
 // so an explicit caller option always wins.
 //
-// zaplog is OTLP/HTTP only: if the effective protocol resolves to grpc (e.g.
-// set explicitly via OTLP.Protocol), NewCore returns an error directing the
-// caller to set telemetry.logs.protocol or use otx.NewLoggerProvider for gRPC.
+// Protocol routing: when the effective protocol is "grpc", NewCore calls
+// otlp.NewGRPCCore — zapwire's hand-rolled OTLP/gRPC client (zero grpc-go in
+// the data plane). Any other protocol (http/protobuf, http) calls otlp.NewCore.
+// Default endpoints follow the effective protocol: grpc → localhost:4317,
+// http/protobuf → localhost:4318. The existing buildEndpoint output
+// (http:// or https:// URL from Classify + IsInsecure) is reused for both
+// protocols; scheme precedence is unchanged. Note that gRPC additionally rejects
+// URL paths at construction with an actionable zapwire error (e.g.
+// "http://host:4317/path" is rejected; use bare "host:4317" or a scheme URL
+// with no path).
 //
 // Resource identity is translated from otx.BuildResource(ctx, cfg):
 // service.name feeds otlp.WithServiceName and is excluded from the remaining
@@ -89,12 +94,11 @@ func NewCore(
 ) (zapcore.Core, *otlp.Writer, error) {
 	base := cfg.GetOTLPConfig()
 
+	// Resolve protocol BEFORE endpoint — the default endpoint depends on protocol.
 	protocol := effectiveProtocol(cfg, base)
-	if protocol == protocolGRPC {
-		return nil, nil, errGRPCProtocol
-	}
 
-	resolvedEndpoint, err := buildEndpoint(effectiveEndpoint(cfg, base), base.IsInsecure())
+	defaultPort := defaultPortFor(protocol)
+	resolvedEndpoint, err := buildEndpoint(effectiveEndpoint(cfg, base, protocol), base.IsInsecure(), defaultPort)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -123,13 +127,21 @@ func NewCore(
 	}
 	merged = append(merged, opts...)
 
+	// Route to the appropriate zapwire transport based on effective protocol
+	// (design §3.2): grpc → zapwire's hand-rolled OTLP/gRPC client; everything
+	// else (http/protobuf, http) → OTLP/HTTP.
+	if protocol == protocolGRPC {
+		return otlp.NewGRPCCore(resolvedEndpoint, enabler, merged...)
+	}
+
 	return otlp.NewCore(resolvedEndpoint, enabler, merged...)
 }
 
-// effectiveEndpoint applies the Logs.Endpoint overlay over the wholesale base,
-// defaulting to localhost:4318 when neither is set (programmatic configs carry
-// no struct-tag defaults).
-func effectiveEndpoint(cfg *otx.TelemetryConfig, base *otx.OTLPConfig) string {
+// effectiveEndpoint applies the Logs.Endpoint overlay over the wholesale base.
+// When neither is set, the default follows the effective protocol: grpc →
+// localhost:4317, everything else → localhost:4318 (programmatic configs carry
+// no struct-tag defaults, so the default must be applied here).
+func effectiveEndpoint(cfg *otx.TelemetryConfig, base *otx.OTLPConfig, protocol string) string {
 	if cfg.Logs != nil && cfg.Logs.Endpoint != "" {
 		return cfg.Logs.Endpoint
 	}
@@ -137,7 +149,11 @@ func effectiveEndpoint(cfg *otx.TelemetryConfig, base *otx.OTLPConfig) string {
 		return base.Endpoint
 	}
 
-	return defaultEndpoint
+	if protocol == protocolGRPC {
+		return defaultEndpointGRPC
+	}
+
+	return defaultEndpointHTTP
 }
 
 // effectiveProtocol applies the Logs.Protocol overlay over the wholesale base,
@@ -173,12 +189,19 @@ func normalizeProtocol(p string) string {
 //     instead of silently prefixing it into garbage like "https://grpc://h"
 //     and deferring to a dial failure at export time;
 //   - bare host:port → prefixed http:// when insecure, else https://;
+//   - bare host without port → defaultPort is appended before the scheme is
+//     prefixed (e.g. "collector" + defaultPort "4317" → "http://collector:4317"
+//     for gRPC insecure). This avoids the silent misconfig where a scheme URL
+//     without a port delegates to the URL-default port (80/443) instead of the
+//     protocol-correct OTLP port. HTTP/protobuf paths see the same fix
+//     ("collector" without a port would have become http://collector → port 80).
 //   - http/https URL → passed through unchanged (zapwire validates it and
-//     appends /v1/logs to an empty path).
+//     appends /v1/logs to an empty path for HTTP; gRPC uses a fixed method path
+//     and rejects user-supplied paths/query/fragments at construction).
 //
 // Classify avoids url.Parse's colon trap (url.Parse("localhost:4317") yields
 // Scheme="localhost") and is case-insensitive on the scheme.
-func buildEndpoint(ep string, insecure bool) (string, error) {
+func buildEndpoint(ep string, insecure bool, defaultPort string) (string, error) {
 	kind, err := endpoint.Classify(ep)
 	if err != nil {
 		return "", err
@@ -186,11 +209,27 @@ func buildEndpoint(ep string, insecure bool) (string, error) {
 	if kind == endpoint.KindHTTP || kind == endpoint.KindHTTPS {
 		return ep, nil
 	}
+	// For bare endpoints, ensure a port is present so the caller does not land on
+	// the URL-default port (80 or 443) when the scheme is prefixed.
+	if _, _, err := net.SplitHostPort(ep); err != nil && ep != "" {
+		// SplitHostPort failed → no port in the bare endpoint; append the default.
+		ep = net.JoinHostPort(ep, defaultPort)
+	}
 	if insecure {
 		return "http://" + ep, nil
 	}
 
 	return "https://" + ep, nil
+}
+
+// defaultPortFor returns the OTel-spec default OTLP port for the given protocol:
+// gRPC uses 4317, everything else (http/protobuf, http) uses 4318.
+func defaultPortFor(protocol string) string {
+	if protocol == protocolGRPC {
+		return "4317"
+	}
+
+	return "4318"
 }
 
 // normalizeDuration mirrors otx's exporter.go: a sub-millisecond value comes

@@ -1,7 +1,7 @@
 github.com/arloliu/fuda v1.5.0 h1:85P+yFgovATB5IpD1T7ucUNY+g3Yfn2+MzTkaQ65cNw=
 github.com/arloliu/fuda v1.5.0/go.mod h1:9GHefXjpnFRMFNwKgT8OmBJfbfmGx7Aaxj4p3/ipbEg=
-github.com/arloliu/zapwire/otlp v0.1.0 h1:yhKDEI9Wsi1rB+6ybuNQrKzBbsjxO1vvS+8E/k9fG8w=
-github.com/arloliu/zapwire/otlp v0.1.0/go.mod h1:fAJBha14YjJyfb6b5ow2/+HeBkan8Q3eKuE+euH2MPc=
+github.com/arloliu/zapwire/otlp v0.2.0 h1:FbLlCmVmxNjJE4CtJjWJUbdojkHZpbOu0GCyDEXI0fI=
+github.com/arloliu/zapwire/otlp v0.2.0/go.mod h1:N4LBhLJfLEGVOxwG86ZoqWsS3sSjrwv8Pf169puxWOE=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=

@@ -76,6 +76,8 @@ logs:
 
 func TestResolveLogExporterParams_ProtocolOverride(t *testing.T) {
 	// Shared OTLP protocol is grpc; the logs-specific override wins.
+	// zaplog.NewCore now routes grpc to otlp.NewGRPCCore rather than
+	// rejecting it, but the per-signal override still works identically.
 	cfg := &TelemetryConfig{
 		Enabled:     boolPtr(true),
 		ServiceName: "svc",
