@@ -33,3 +33,6 @@ tmp/
 
 # Specific binaries
 cmd/otlp-sim/otlp-sim
+
+# Git worktrees (local-only)
+.worktrees/
