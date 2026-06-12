@@ -34,6 +34,8 @@ telemetry:
   logs:
     enabled: false
     exporter: "otlp"
+    protocol: "http/protobuf"  # otx/zaplog override; OTEL_EXPORTER_OTLP_LOGS_PROTOCOL
+    minLevel: "warn"           # otx/zaplog OTLP core min level (default: info)
 
   metrics:
     enabled: false
@@ -93,6 +95,7 @@ OTX validates configuration at load time:
 - `serviceName`: Required when enabled
 - `samplerArg`: Must be between 0.0 and 1.0
 - `protocol`: Must be `grpc`, `http/protobuf`, or `http`
+- `logs.minLevel`: Must be a zap level (`debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal`)
 - `exporter`: Must be `otlp`, `console`, `stdout`, or `none`
 - `timeout`: Must be non-negative
 - `interval`: Must be positive
