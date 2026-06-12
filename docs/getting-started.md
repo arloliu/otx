@@ -88,9 +88,21 @@ cfg, err := otx.LoadConfig("config.yaml")
 // or use ParseConfig for embedded config
 ```
 
+## Logging
+
+If your service logs with [zap](https://github.com/uber-go/zap), ship logs over
+the lightweight `otx/zaplog` adapter instead of the SDK log bridge. **Routing
+rule:** zap services use the zaplog path (zap → zapwire OTLP/HTTP, single encode
+pass, no SDK log bridge or gRPC on the log data path); `otx.NewLoggerProvider` stays for non-zap
+paths (slog bridge, the direct OTel log API) or when gRPC OTLP for logs is a hard
+requirement. Never run both for one logger. zaplog derives its resource identity
+from the same config as your traces, so logs and traces join in the backend. See
+the [Zap Logging](zap-logging.md) guide.
+
 ## Next Steps
 
 - [Configuration Reference](configuration.md) - All configuration options
+- [Zap Logging](zap-logging.md) - Ship zap logs over OTLP with trace correlation
 - [Tracing Best Practices](tracing-best-practices.md) - Span naming, attributes
 - [Semantic Conventions](semantic-conventions.md) - OpenTelemetry standards
 - [HTTP/gRPC Integration](http-grpc-integration.md) - Middleware setup

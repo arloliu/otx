@@ -102,6 +102,18 @@ func (l Logger) InfoCtx(ctx context.Context, msg string, fields ...zap.Field)
 func (l Logger) WarnCtx(ctx context.Context, msg string, fields ...zap.Field)
 func (l Logger) ErrorCtx(ctx context.Context, msg string, fields ...zap.Field)
 // (sugared variants over otlp.InjectTraceKVs as needed)
+
+// Wrap returns a ctx-aware Logger over an existing *zap.Logger.
+// Use it when you composed the core yourself (NewCore + Attach).
+// (ctor factories added post-review at user request — Wrap for composed cores,
+// New as the one-call path)
+func Wrap(l *zap.Logger) Logger
+
+// New is the one-call setup: builds the OTLP core from cfg, tees it onto base
+// (Attach), and returns the ctx-aware Logger plus the Writer the caller must
+// Close at shutdown. A nil base returns a Logger writing to the OTLP core only.
+func New(ctx context.Context, cfg *otx.TelemetryConfig, base *zap.Logger,
+    level zapcore.LevelEnabler, opts ...otlp.Option) (Logger, *otlp.Writer, error)
 ```
 
 `InfoCtx` etc. are one-liners over `otlp.InjectTraceFields(ctx, fields...)` — they work on
