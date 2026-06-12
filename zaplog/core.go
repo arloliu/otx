@@ -38,8 +38,8 @@ import (
 )
 
 const (
-	defaultEndpoint = "localhost:4317"
-	defaultProtocol = "grpc"
+	defaultEndpoint = "localhost:4318"
+	defaultProtocol = "http/protobuf"
 
 	protocolHTTPProtobuf = "http/protobuf"
 	protocolHTTP         = "http"
@@ -66,9 +66,9 @@ var errGRPCProtocol = errors.New(
 // settings become config-derived otlp options applied BEFORE the caller's opts,
 // so an explicit caller option always wins.
 //
-// zaplog is OTLP/HTTP only: if the effective protocol resolves to grpc (the
-// shared default), NewCore returns an error directing the caller to set
-// telemetry.logs.protocol or use otx.NewLoggerProvider for gRPC.
+// zaplog is OTLP/HTTP only: if the effective protocol resolves to grpc (e.g.
+// set explicitly via OTLP.Protocol), NewCore returns an error directing the
+// caller to set telemetry.logs.protocol or use otx.NewLoggerProvider for gRPC.
 //
 // Resource identity is translated from otx.BuildResource(ctx, cfg):
 // service.name feeds otlp.WithServiceName and is excluded from the remaining
@@ -124,7 +124,7 @@ func NewCore(
 }
 
 // effectiveEndpoint applies the Logs.Endpoint overlay over the wholesale base,
-// defaulting to localhost:4317 when neither is set (programmatic configs carry
+// defaulting to localhost:4318 when neither is set (programmatic configs carry
 // no struct-tag defaults).
 func effectiveEndpoint(cfg *otx.TelemetryConfig, base *otx.OTLPConfig) string {
 	if cfg.Logs != nil && cfg.Logs.Endpoint != "" {
@@ -138,8 +138,8 @@ func effectiveEndpoint(cfg *otx.TelemetryConfig, base *otx.OTLPConfig) string {
 }
 
 // effectiveProtocol applies the Logs.Protocol overlay over the wholesale base,
-// defaulting to grpc (matching otx's baseExporterParams) — which NewCore then
-// rejects, keeping the two pipelines config-compatible.
+// defaulting to http/protobuf (matching otx's baseExporterParams and the OTel
+// spec recommendation) — zaplog accepts this default without a protocol override.
 func effectiveProtocol(cfg *otx.TelemetryConfig, base *otx.OTLPConfig) string {
 	if cfg.Logs != nil && cfg.Logs.Protocol != "" {
 		return normalizeProtocol(cfg.Logs.Protocol)
@@ -164,8 +164,7 @@ func normalizeProtocol(p string) string {
 // buildEndpoint maps an otx host:port (or full URL) to the http(s):// form
 // zapwire requires. A bare host:port with insecure TLS becomes http://, else
 // https://; an endpoint already carrying an http/https scheme passes through
-// unchanged (zapwire validates it and appends /v1/logs to empty paths). No
-// 4317->4318 port rewriting (design §3.2).
+// unchanged (zapwire validates it and appends /v1/logs to empty paths).
 func buildEndpoint(endpoint string, insecure bool) string {
 	if u, err := url.Parse(endpoint); err == nil && isHTTPScheme(u.Scheme) {
 		return endpoint

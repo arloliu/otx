@@ -9,8 +9,9 @@ import (
 
 func TestLogsConfig_ProtocolMinLevel_Defaults(t *testing.T) {
 	// Loaded config without logs.protocol/minLevel leaves both empty;
-	// callers (zaplog) treat empty as their own default (grpc-rejection /
-	// info). fuda applies no struct default to these omitempty fields.
+	// callers (zaplog) treat empty protocol as their own default
+	// (http/protobuf, accepted) and empty minLevel as info. fuda applies no
+	// struct default to these omitempty fields.
 	cfg, err := ParseConfig([]byte(`
 enabled: true
 serviceName: "svc"

@@ -15,8 +15,8 @@ telemetry:
     region: "us-east-1"
 
   otlp:
-    endpoint: "localhost:4317"
-    protocol: "grpc"
+    endpoint: "localhost:4318"
+    protocol: "http/protobuf"
     insecure: true
     timeout: 10s
     compression: "gzip"
@@ -34,7 +34,7 @@ telemetry:
   logs:
     enabled: false
     exporter: "otlp"
-    protocol: "http/protobuf"  # otx/zaplog override; OTEL_EXPORTER_OTLP_LOGS_PROTOCOL
+    protocol: "http/protobuf"  # per-signal override; OTEL_EXPORTER_OTLP_LOGS_PROTOCOL
     minLevel: "warn"           # otx/zaplog OTLP core min level (default: info)
 
   metrics:

@@ -51,9 +51,9 @@ func main() {
         Version:     "1.2.3",
         Environment: "production",
         OTLP: &otx.OTLPConfig{
-            Endpoint: "collector:4318",
-            Protocol: "http/protobuf", // zaplog is HTTP-only
-            Insecure: ptr(true),       // bare host:port -> http://
+            Endpoint: "collector:4318", // default port for OTLP/HTTP
+            Insecure: ptr(true),        // bare host:port -> http://
+            // Protocol defaults to "http/protobuf" — no override needed.
         },
         Logs: &otx.LogsConfig{Enabled: ptr(true)},
     }
@@ -74,11 +74,13 @@ func main() {
 }
 ```
 
-`zaplog` requires the HTTP protocol. otx defaults the shared `OTLP.Protocol` to
-`grpc`; set `telemetry.logs.protocol: http/protobuf` (env
-`OTEL_EXPORTER_OTLP_LOGS_PROTOCOL`) to override it for logs only, without
-changing traces or metrics. If the effective protocol resolves to `grpc`,
-`NewCore` returns a clear error pointing you here.
+`zaplog` requires the HTTP protocol. The shared `OTLP.Protocol` now defaults to
+`http/protobuf`, so zaplog works out of the box with no extra configuration.
+If you explicitly set `OTLP.Protocol: grpc` (e.g. for traces/metrics on gRPC),
+use `telemetry.logs.protocol: http/protobuf` (env
+`OTEL_EXPORTER_OTLP_LOGS_PROTOCOL`) to override it for logs only. If the
+effective protocol resolves to `grpc`, `NewCore` returns a clear error pointing
+you here.
 
 ### Endpoint mapping
 
@@ -89,8 +91,8 @@ form zapwire needs:
 - bare `host:port` + `insecure: false` → `https://host:port`
 - an endpoint already carrying a scheme passes through unchanged
 
-zapwire appends `/v1/logs` when the path is empty. There is no `4317` → `4318`
-port rewriting — set the HTTP port explicitly.
+zapwire appends `/v1/logs` when the path is empty. Set the port explicitly in
+the endpoint — there is no automatic port rewriting.
 
 ## Attach to an Existing Logger
 
@@ -127,8 +129,8 @@ keeping `debug`/`info` on a local sink:
 telemetry:
   logs:
     enabled: true
-    protocol: http/protobuf
     minLevel: warn   # zaplog OTLP core emits warn and above; default: info
+    # protocol defaults to http/protobuf; set explicitly only when OTLP.Protocol is grpc
 ```
 
 `minLevel` sets the OTLP core's `LevelEnabler` when you pass `nil` as the level

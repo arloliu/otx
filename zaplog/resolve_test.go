@@ -88,7 +88,7 @@ func TestEffectiveProtocol_Precedence(t *testing.T) {
 			want: "http/protobuf",
 		},
 		{
-			name: "empty default is grpc (rejected by NewCore)",
+			name: "empty default is http/protobuf (accepted by NewCore)",
 			cfg:  &otx.TelemetryConfig{},
 			want: defaultProtocol,
 		},

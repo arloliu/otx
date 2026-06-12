@@ -122,8 +122,9 @@ legibly by tee'd console/JSON cores).
 
 ### 3.2 Endpoint, protocol & transport-option mapping (pass-1 P1 ×2)
 
-otx endpoints are gRPC-style `host:port` (default `localhost:4317`, default protocol
-`grpc` on the shared `OTLPConfig`); zapwire/otlp needs `http(s)://host:port` and is
+otx endpoints are `host:port` (default `localhost:4318`, default protocol
+`http/protobuf` on the shared `OTLPConfig` — shared default flipped to http/protobuf
+post-review; spec-aligned); zapwire/otlp needs `http(s)://host:port` and is
 HTTP-only. Today `LogsConfig` has only `Enabled`/`Exporter`/`Endpoint` (`config.go:126`)
 — there is **no per-signal logs protocol field**, and the real fallback chain runs
 through `GetOTLPConfig()`, which folds the deprecated `Exporter.*` fields into the shared
@@ -140,9 +141,9 @@ Protocol string `yaml:"protocol,omitempty" json:"protocol,omitempty" env:"OTEL_E
 into `resolveLogExporterParams` so the SDK path (`NewLoggerProvider`) honors it —
 keeping the two pipelines config-compatible. This is deliberately **logs-only**:
 `TracesConfig`/`MetricsConfig` keep no per-signal protocol field — the asymmetry exists
-because zaplog's HTTP-only transport needs a way to diverge from a grpc-default shared
-protocol without affecting traces/metrics; it is not a precedent for adding per-signal
-protocol elsewhere.
+because zaplog's HTTP-only transport needs a way to diverge from an explicitly-grpc
+shared protocol without affecting traces/metrics; it is not a precedent for adding
+per-signal protocol elsewhere.
 
 **Mapping rules for `zaplog.NewCore`** (all "effective" values resolved through the same
 chain `resolveLogExporterParams` uses). The base is `GetOTLPConfig()`, whose semantics
@@ -155,10 +156,11 @@ when non-nil, and converts the deprecated `Exporter` block only when `cfg.OTLP =
    (= `OTLP.Endpoint`, or deprecated `Exporter.Endpoint` only when no `OTLP` block —
    backward compatible with existing otx configs).
 2. Effective protocol: `Logs.Protocol` if set, else `GetOTLPConfig().Protocol` (same
-   wholesale rule). Must be `http/protobuf` (or the `http` alias); if it resolves to
-   `grpc`, return a **clear error** ("zaplog requires logs protocol http/protobuf; set
-   telemetry.logs.protocol, or use otx.NewLoggerProvider for gRPC") — no silent
-   4317→4318 port rewriting.
+   wholesale rule). Must be `http/protobuf` (or the `http` alias); the shared default
+   is now `http/protobuf` so this resolves correctly without any override. If it
+   resolves to `grpc` (e.g. shared protocol set explicitly to grpc), return a **clear
+   error** ("zaplog requires logs protocol http/protobuf; set telemetry.logs.protocol,
+   or use otx.NewLoggerProvider for gRPC").
 3. Scheme: bare `host:port` + effective `Insecure: true` → `http://`; otherwise
    `https://`. An endpoint already carrying a scheme passes through (zapwire validates
    and appends `/v1/logs` only to empty or `/` paths).
@@ -312,4 +314,4 @@ merge. No `replace` directive is committed.
 |---|---|
 | **P1** Precedence table misrepresented `GetOTLPConfig()` as field-merge | §3.2 now states the wholesale rule (`cfg.OTLP` returned as-is when non-nil; deprecated `Exporter` converted only when `OTLP == nil`) with `Logs.*` per-field overlays on top; test matrix rows updated to encode it. |
 | **P1** `service.name` would be emitted twice (resource attrs + WithServiceName) | §3.3 de-duplication rule: extract `service.name` for `WithServiceName`, exclude from `WithResource`; exactly-one-`service.name` test added. |
-| **P2** `Logs.Protocol` per-signal asymmetry undocumented | §3.2 notes the field is deliberately logs-only (HTTP-only transport needs divergence from a grpc-default shared protocol) and not a precedent for traces/metrics. |
+| **P2** `Logs.Protocol` per-signal asymmetry undocumented | §3.2 notes the field is deliberately logs-only (HTTP-only transport needs divergence from an explicitly-grpc shared protocol) and not a precedent for traces/metrics. |
