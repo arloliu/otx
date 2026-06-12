@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 
@@ -30,7 +31,9 @@ func TestServerHandler(t *testing.T) {
 	)
 
 	go func() {
-		if err := s.Serve(lis); err != nil {
+		// The deferred Stop can win the race against Serve starting, in which
+		// case Serve returns ErrServerStopped — expected, not a failure.
+		if err := s.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			panic(err)
 		}
 	}()
@@ -65,7 +68,9 @@ func TestServerHandlerWithProviders(t *testing.T) {
 	)
 
 	go func() {
-		if err := s.Serve(lis); err != nil {
+		// The deferred Stop can win the race against Serve starting, in which
+		// case Serve returns ErrServerStopped — expected, not a failure.
+		if err := s.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			panic(err)
 		}
 	}()
@@ -100,7 +105,9 @@ func TestHandlerWithNilProviders(t *testing.T) {
 	)
 
 	go func() {
-		if err := s.Serve(lis); err != nil {
+		// The deferred Stop can win the race against Serve starting, in which
+		// case Serve returns ErrServerStopped — expected, not a failure.
+		if err := s.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			panic(err)
 		}
 	}()
