@@ -37,7 +37,7 @@ func baseExporterParams(cfg *TelemetryConfig) exporterParams {
 	params := exporterParams{
 		Type:     "otlp",
 		Protocol: "http/protobuf",
-		Endpoint: "localhost:4318",
+		Endpoint: "", // protocol-aware default applied in each resolve*ExporterParams
 		Timeout:  10 * time.Second,
 		Insecure: true,
 	}
@@ -63,6 +63,16 @@ func baseExporterParams(cfg *TelemetryConfig) exporterParams {
 	params.Insecure = otlp.IsInsecure()
 
 	return params
+}
+
+// defaultEndpointFor returns the OTel-spec default OTLP endpoint for the given
+// protocol: gRPC uses 4317, everything else (http/protobuf, http) uses 4318.
+func defaultEndpointFor(protocol string) string {
+	if protocol == "grpc" {
+		return "localhost:4317"
+	}
+
+	return "localhost:4318"
 }
 
 // nopSpanExporter is a no-op span exporter.
@@ -96,6 +106,11 @@ func resolveTraceExporterParams(cfg *TelemetryConfig) exporterParams {
 	params.Type = cfg.GetTracesExporter()
 	if cfg.Traces != nil && cfg.Traces.Endpoint != "" {
 		params.Endpoint = cfg.Traces.Endpoint
+	}
+
+	// Apply protocol-aware default endpoint after all per-signal overrides.
+	if params.Endpoint == "" {
+		params.Endpoint = defaultEndpointFor(params.Protocol)
 	}
 
 	return params
@@ -171,6 +186,11 @@ func resolveLogExporterParams(cfg *TelemetryConfig) exporterParams {
 		}
 	}
 
+	// Apply protocol-aware default endpoint after all per-signal overrides.
+	if params.Endpoint == "" {
+		params.Endpoint = defaultEndpointFor(params.Protocol)
+	}
+
 	return params
 }
 
@@ -232,6 +252,11 @@ func resolveMetricExporterParams(cfg *TelemetryConfig) exporterParams {
 		if cfg.Metrics.Endpoint != "" {
 			params.Endpoint = cfg.Metrics.Endpoint
 		}
+	}
+
+	// Apply protocol-aware default endpoint after all per-signal overrides.
+	if params.Endpoint == "" {
+		params.Endpoint = defaultEndpointFor(params.Protocol)
 	}
 
 	return params
