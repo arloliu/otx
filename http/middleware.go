@@ -22,7 +22,7 @@ import (
 //
 //	http.Handle("/api", http.Handler(myHandler, "api.request"))
 func Handler(handler http.Handler, operation string, opts ...otelhttp.Option) http.Handler {
-	return otelhttp.NewHandler(handler, operation, opts...)
+	return otelhttp.NewHandler(handler, operation, withOperationSpanName(operation, opts)...)
 }
 
 // HandlerWithProviders wraps an http.Handler with OTel tracing and metrics
@@ -55,7 +55,7 @@ func HandlerWithProviders(
 	allOpts := buildProviderOptions(tp, mp, prop)
 	allOpts = append(allOpts, opts...)
 
-	return otelhttp.NewHandler(handler, operation, allOpts...)
+	return otelhttp.NewHandler(handler, operation, withOperationSpanName(operation, allOpts)...)
 }
 
 // Middleware returns middleware that traces HTTP requests.
@@ -71,7 +71,7 @@ func HandlerWithProviders(
 //	http.Handle("/api", http.Middleware()(myHandler))
 func Middleware(opts ...otelhttp.Option) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return otelhttp.NewMiddleware("http.request", opts...)(next)
+		return otelhttp.NewMiddleware("http.request", withOperationSpanName("http.request", opts)...)(next)
 	}
 }
 
@@ -102,8 +102,25 @@ func MiddlewareWithProviders(
 	allOpts = append(allOpts, opts...)
 
 	return func(next http.Handler) http.Handler {
-		return otelhttp.NewMiddleware("http.request", allOpts...)(next)
+		return otelhttp.NewMiddleware("http.request", withOperationSpanName("http.request", allOpts)...)(next)
 	}
+}
+
+// withOperationSpanName prepends a default span-name formatter that names the
+// span after operation, then appends the caller's opts.
+//
+// otelhttp v0.69 changed the default formatter to derive the span name from the
+// HTTP server semantic conventions (e.g. "GET") and no longer uses the operation
+// argument. otx's middleware contract documents that operation names the span,
+// so we restore that behavior here. Because the formatter is prepended, a caller
+// passing their own otelhttp.WithSpanNameFormatter still wins (later option
+// applied last).
+func withOperationSpanName(operation string, opts []otelhttp.Option) []otelhttp.Option {
+	spanName := otelhttp.WithSpanNameFormatter(func(string, *http.Request) string {
+		return operation
+	})
+
+	return append([]otelhttp.Option{spanName}, opts...)
 }
 
 // buildProviderOptions creates otelhttp.Option slice from providers.

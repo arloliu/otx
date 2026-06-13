@@ -32,7 +32,7 @@ A zap service can reach OTLP two ways:
    processor) → `otlploghttp`/`otlploggrpc`. Full SDK feature set and a gRPC option, but
    double-converts every record (zap field → `log.KeyValue` → proto) and drags
    grpc+protobuf into the binary.
-2. **zapwire path:** zap → `zapwire/otlp.NewCore` / `otlp.NewGRPCCore` → its own async
+2. **zapwire path:** zap → `zapwire/otlp.NewHTTPCore` / `otlp.NewGRPCCore` → its own async
    OTLP exporter (HTTP or hand-rolled gRPC, zero grpc-go in the data plane). Single
    encode pass (~228 ns / 8 allocs per record, byte-identity protobuf), no SDK/protobuf,
    at-most-once with counted drops.
@@ -157,7 +157,7 @@ when non-nil, and converts the deprecated `Exporter` block only when `cfg.OTLP =
    wholesale rule). The shared default is `http/protobuf`. Protocol routing in
    `NewCore`: when the effective protocol is `grpc`, `NewCore` calls
    `otlp.NewGRPCCore` — zapwire's hand-rolled OTLP/gRPC client (zero grpc-go in the
-   data plane); any other protocol calls `otlp.NewCore` (HTTP). Default endpoints
+   data plane); any other protocol calls `otlp.NewHTTPCore` (HTTP). Default endpoints
    follow the effective protocol: `grpc` → `localhost:4317`, `http/protobuf` →
    `localhost:4318`. The pinned-error clause (prior rule 2) is removed: gRPC is now
    a supported path, not a rejection.
@@ -220,7 +220,7 @@ telemetry:
 
 `minLevel` materializes as the `zapcore.LevelEnabler` default in `NewCore` when the
 caller passes **nil**: `zaplog` resolves nil → `Logs.MinLevel` → `info` and never passes
-nil through to `otlp.NewCore` (whose core stores the enabler directly — a nil would
+nil through to `otlp.NewHTTPCore` (whose core stores the enabler directly — a nil would
 panic in `Check`; pass-1 P2). Invalid `minLevel` strings fail config validation. A
 `zap.AtomicLevel` escape hatch stays available by passing an explicit enabler — the
 cost-control story (zapwire guide: "Cost control: send only warn+ to OTel") driven
@@ -278,7 +278,7 @@ when implementing).
      `WithServiceName`, excluded from `WithResource` — pass-2 P1); schema URL
      documented-absent; no synthesized `service.instance.id`/host attrs.
    - level defaults: nil → `Logs.MinLevel` → `info`; explicit enabler wins; invalid
-     `minLevel` fails validation; nil never reaches `otlp.NewCore`.
+     `minLevel` fails validation; nil never reaches `otlp.NewHTTPCore`.
    - Attach/injection: tee preserves original output; OTLP core consumes
      `InjectTraceFields`; sticky `zap.Any("context", ctx)` works through the zapwire
      custom core; non-OTLP tee'd cores render `span_context` legibly.
@@ -312,7 +312,7 @@ committed.
 | **P1** Design named non-existent `logs.protocol`; precedence omitted the deprecated `Exporter.*` fallback chain | `LogsConfig.Protocol` added for real (OTel env `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL`), wired into `resolveLogExporterParams` too; effective endpoint/protocol resolved via `GetOTLPConfig()` + `Logs.*` overlays incl. deprecated fields (§3.2). |
 | **P1** Config-driven `Headers`/`Timeout`/`Compression` would be silently dropped | Config-derived `WithHeaders`/`WithTimeout`/`WithCompression` are part of `NewCore`; applied before caller opts so explicit options win (§3.2 rules 4-5). |
 | **P1** "Exact resource parity" unachievable — zapwire omits `ResourceLogs.schema_url` | Claim narrowed to **resource attribute parity** (what backends join on); schema-URL absence documented; `otlp.WithSchemaURL` noted as a possible future zapwire enhancement (§3.3). |
-| **P2** Shutdown contract, nil-level obligation, `Logger` method-set ambiguity | `w.Sync()` then `w.Close()` recommended (retry budget vs single-attempt drain); nil level resolved by zaplog before reaching `otlp.NewCore`; `Logger` wrapper contract pinned (§3.4, §3.5, §3.5b). |
+| **P2** Shutdown contract, nil-level obligation, `Logger` method-set ambiguity | `w.Sync()` then `w.Close()` recommended (retry budget vs single-attempt drain); nil level resolved by zaplog before reaching `otlp.NewHTTPCore`; `Logger` wrapper contract pinned (§3.4, §3.5, §3.5b). |
 
 ## 8. Review pass-2 resolutions
 

@@ -228,7 +228,7 @@ func TestNewCore_RejectsInvalidEndpointScheme(t *testing.T) {
 	// the only validation seam. An invalid endpoint scheme (grpc://) must surface
 	// the classifier's actionable error rather than being prefixed into garbage
 	// ("https://grpc://collector:4317") and deferred to a dial failure. Protocol
-	// is http/protobuf so NewCore routes to otlp.NewCore, not otlp.NewGRPCCore —
+	// is http/protobuf so NewCore routes to otlp.NewHTTPCore, not otlp.NewGRPCCore —
 	// the endpoint check must be what rejects this.
 	cfg := &otx.TelemetryConfig{
 		Enabled:     boolPtr(true),

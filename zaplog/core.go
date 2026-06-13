@@ -66,7 +66,7 @@ const (
 //
 // Protocol routing: when the effective protocol is "grpc", NewCore calls
 // otlp.NewGRPCCore — zapwire's hand-rolled OTLP/gRPC client (zero grpc-go in
-// the data plane). Any other protocol (http/protobuf, http) calls otlp.NewCore.
+// the data plane). Any other protocol (http/protobuf, http) calls otlp.NewHTTPCore.
 // Default endpoints follow the effective protocol: grpc → localhost:4317,
 // http/protobuf → localhost:4318. The existing buildEndpoint output
 // (http:// or https:// URL from Classify + IsInsecure) is reused for both
@@ -134,7 +134,7 @@ func NewCore(
 		return otlp.NewGRPCCore(resolvedEndpoint, enabler, merged...)
 	}
 
-	return otlp.NewCore(resolvedEndpoint, enabler, merged...)
+	return otlp.NewHTTPCore(resolvedEndpoint, enabler, merged...)
 }
 
 // effectiveEndpoint applies the Logs.Endpoint overlay over the wholesale base.
