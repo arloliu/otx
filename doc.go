@@ -11,9 +11,13 @@
 //
 // # Quick Start
 //
-// Initialize the tracer provider and global tracer:
+// Initialize the tracer provider and global tracer. Use [BoolPtr] to set the
+// *bool Enabled fields when building a config programmatically:
 //
-//	cfg := &otx.TelemetryConfig{...}
+//	cfg := &otx.TelemetryConfig{
+//	    Enabled:     otx.BoolPtr(true),
+//	    ServiceName: "my-service",
+//	}
 //	tp, err := otx.NewTracerProvider(ctx, cfg)
 //	if err != nil {
 //	    log.Fatal(err)

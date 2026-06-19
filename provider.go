@@ -28,12 +28,26 @@ var ErrMetricsDisabled = errors.New("otx: metrics export is disabled")
 // ErrServiceNameRequired is returned when ServiceName is empty but telemetry is enabled.
 var ErrServiceNameRequired = errors.New("otx: service name is required")
 
+// ErrTracesDisabled is returned by NewTracerProvider when telemetry is enabled
+// but the traces signal is explicitly disabled. It wraps ErrDisabled, so callers
+// that match either errors.Is(err, ErrTracesDisabled) or
+// errors.Is(err, ErrDisabled) succeed.
+var ErrTracesDisabled = fmt.Errorf("otx: traces export is disabled: %w", ErrDisabled)
+
 // ============================================================================
 // Tracer Provider
 // ============================================================================
 
 // NewTracerProvider initializes the OpenTelemetry TracerProvider.
-// Returns ErrDisabled if telemetry is not enabled in config.
+// Returns ErrDisabled if telemetry is not enabled in config, or ErrTracesDisabled
+// (which wraps ErrDisabled) if telemetry is enabled but the traces signal is off.
+//
+// Side effects: on success this mutates OTel globals — it calls
+// otel.SetTracerProvider and otel.SetTextMapPropagator, replacing any previously
+// installed global tracer provider and propagator. The global propagator is
+// installed only by this constructor; services that export metrics or logs but
+// not traces should call otel.SetTextMapPropagator(otx.BuildPropagator(cfg)) to
+// retain context propagation.
 func NewTracerProvider(ctx context.Context, cfg *TelemetryConfig) (*sdktrace.TracerProvider, error) {
 	if !cfg.IsEnabled() {
 		return nil, ErrDisabled
@@ -41,7 +55,12 @@ func NewTracerProvider(ctx context.Context, cfg *TelemetryConfig) (*sdktrace.Tra
 
 	// Check if traces are enabled
 	if cfg.Traces != nil && !cfg.Traces.IsEnabled() {
-		return nil, ErrDisabled
+		return nil, ErrTracesDisabled
+	}
+
+	// Fail fast on invalid programmatic endpoint config before dialing.
+	if err := cfg.ValidateEndpoints(); err != nil {
+		return nil, err
 	}
 
 	// Build resource
@@ -82,6 +101,11 @@ func NewTracerProvider(ctx context.Context, cfg *TelemetryConfig) (*sdktrace.Tra
 // NewLoggerProvider initializes the OpenTelemetry LoggerProvider.
 // Returns ErrLogsDisabled if logs export is not enabled in config.
 // Use this with shared/logging's WithLoggerProvider integration.
+//
+// Side effects: on success this mutates the OTel log global — it calls
+// global.SetLoggerProvider, replacing any previously installed global logger
+// provider. It does not install the global propagator (only NewTracerProvider
+// does); see BuildPropagator if you need propagation without traces.
 func NewLoggerProvider(ctx context.Context, cfg *TelemetryConfig) (*sdklog.LoggerProvider, error) {
 	if !cfg.IsEnabled() {
 		return nil, ErrDisabled
@@ -90,6 +114,11 @@ func NewLoggerProvider(ctx context.Context, cfg *TelemetryConfig) (*sdklog.Logge
 	// Check if logs are enabled (opt-in)
 	if cfg.Logs == nil || !cfg.Logs.IsEnabled() {
 		return nil, ErrLogsDisabled
+	}
+
+	// Fail fast on invalid programmatic endpoint config before dialing.
+	if err := cfg.ValidateEndpoints(); err != nil {
+		return nil, err
 	}
 
 	// Build resource
@@ -122,6 +151,11 @@ func NewLoggerProvider(ctx context.Context, cfg *TelemetryConfig) (*sdklog.Logge
 
 // NewMeterProvider initializes the OpenTelemetry MeterProvider.
 // Returns ErrMetricsDisabled if metrics export is not enabled in config.
+//
+// Side effects: on success this mutates the OTel global — it calls
+// otel.SetMeterProvider, replacing any previously installed global meter
+// provider. It does not install the global propagator (only NewTracerProvider
+// does); see BuildPropagator if you need propagation without traces.
 func NewMeterProvider(ctx context.Context, cfg *TelemetryConfig) (*sdkmetric.MeterProvider, error) {
 	if !cfg.IsEnabled() {
 		return nil, ErrDisabled
@@ -130,6 +164,11 @@ func NewMeterProvider(ctx context.Context, cfg *TelemetryConfig) (*sdkmetric.Met
 	// Check if metrics are enabled (opt-in)
 	if cfg.Metrics == nil || !cfg.Metrics.IsEnabled() {
 		return nil, ErrMetricsDisabled
+	}
+
+	// Fail fast on invalid programmatic endpoint config before dialing.
+	if err := cfg.ValidateEndpoints(); err != nil {
+		return nil, err
 	}
 
 	// Build resource

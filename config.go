@@ -79,6 +79,14 @@ type OTLPConfig struct {
 
 	// Insecure disables TLS for the OTLP connection.
 	// Maps to OTEL_EXPORTER_OTLP_INSECURE.
+	//
+	// WARNING: the otx default is true (plaintext), which differs from the OTel
+	// spec default (false). A bare host:port endpoint with Insecure unset is
+	// exported over plaintext — including any credential-bearing Headers. This
+	// is safe for the localhost default but a leak against a remote collector;
+	// otx emits a one-time diagnostic via otel.Handle in that case. Set this to
+	// false, or use an https:// Endpoint (the scheme forces TLS regardless of
+	// this flag), when exporting to a remote host.
 	Insecure *bool `yaml:"insecure" json:"insecure" env:"OTEL_EXPORTER_OTLP_INSECURE" default:"true"`
 
 	// Headers adds custom headers to OTLP requests.
@@ -101,7 +109,9 @@ type OTLPConfig struct {
 	Compression string `yaml:"compression,omitempty" json:"compression,omitempty" env:"OTEL_EXPORTER_OTLP_COMPRESSION" validate:"omitempty,oneof=gzip none"`
 }
 
-// IsInsecure returns true if insecure connection is enabled.
+// IsInsecure returns true if insecure (plaintext) connection is enabled.
+// It defaults to true when the receiver or the Insecure field is nil — see the
+// Insecure field doc for the plaintext-default caveat.
 func (c *OTLPConfig) IsInsecure() bool {
 	return c == nil || c.Insecure == nil || *c.Insecure
 }
@@ -127,6 +137,9 @@ type TracesConfig struct {
 }
 
 // IsEnabled returns true if tracing is enabled.
+// Traces default ON: a nil receiver or nil Enabled field reports true, so tracing
+// is active whenever the parent telemetry is enabled unless explicitly disabled.
+// This is the opposite of LogsConfig/MetricsConfig, which default off.
 func (c *TracesConfig) IsEnabled() bool {
 	return c == nil || c.Enabled == nil || *c.Enabled
 }
@@ -178,6 +191,9 @@ type LogsConfig struct {
 }
 
 // IsEnabled returns true if OTel log export is enabled.
+// Logs default OFF: a nil receiver or nil Enabled field reports false, so log
+// export is opt-in and stays off unless Enabled is explicitly set to true. This
+// is the opposite of TracesConfig, which defaults on.
 func (c *LogsConfig) IsEnabled() bool {
 	return c != nil && c.Enabled != nil && *c.Enabled
 }
@@ -206,6 +222,9 @@ type MetricsConfig struct {
 }
 
 // IsEnabled returns true if metrics collection is enabled.
+// Metrics default OFF: a nil receiver or nil Enabled field reports false, so
+// metrics collection is opt-in and stays off unless Enabled is explicitly set to
+// true. This is the opposite of TracesConfig, which defaults on.
 func (c *MetricsConfig) IsEnabled() bool {
 	return c != nil && c.Enabled != nil && *c.Enabled
 }
@@ -314,7 +333,10 @@ func splitPropagators(propagators string) []string {
 }
 
 // IsEnabled returns true if telemetry is enabled.
-// Defaults to false if nil.
+// Telemetry defaults OFF: a nil receiver or nil Enabled field reports false, so
+// the whole telemetry system is opt-in and stays off unless Enabled is set to
+// true. This is the opposite of TracesConfig, which defaults on once telemetry
+// is enabled.
 func (c *TelemetryConfig) IsEnabled() bool {
 	return c != nil && c.Enabled != nil && *c.Enabled
 }
@@ -349,9 +371,15 @@ func (c *TelemetryConfig) GetTracesExporter() string {
 }
 
 // GetOTLPEndpoint returns the effective OTLP endpoint for traces.
-// Priority: Traces.Endpoint > OTLP.Endpoint > Exporter.Endpoint (deprecated);
+// Priority: Traces.Endpoint > the effective OTLP endpoint (GetOTLPConfig, which
+// itself falls back to the deprecated Exporter block only when OTLP is nil);
 // when none is set, the default follows the effective protocol (grpc →
 // localhost:4317, otherwise localhost:4318).
+//
+// It resolves through GetOTLPConfig so it can never diverge from the exporter
+// builders — both consume the same effective OTLP block, including the
+// non-nil-but-empty OTLP case (which intentionally does not fall back to
+// Exporter.Endpoint).
 //
 // Deprecated: the exporter builders resolve endpoints internally; this
 // accessor is retained for API compatibility only.
@@ -362,14 +390,13 @@ func (c *TelemetryConfig) GetOTLPEndpoint() string {
 	if c.Traces != nil && c.Traces.Endpoint != "" {
 		return c.Traces.Endpoint
 	}
-	if c.OTLP != nil && c.OTLP.Endpoint != "" {
-		return c.OTLP.Endpoint
-	}
-	if c.Exporter != nil && c.Exporter.Endpoint != "" {
-		return c.Exporter.Endpoint
+
+	otlp := c.GetOTLPConfig()
+	if otlp.Endpoint != "" {
+		return otlp.Endpoint
 	}
 
-	return defaultEndpointFor(c.GetOTLPConfig().Protocol)
+	return defaultEndpointFor(otlp.Protocol)
 }
 
 // GetOTLPConfig returns the effective OTLP config.
@@ -449,6 +476,14 @@ func (c *TelemetryConfig) ValidateEndpoints() error {
 	return nil
 }
 
+// BoolPtr returns a pointer to v. It is the exported helper for setting the
+// *bool Enabled fields on TelemetryConfig and the per-signal configs when
+// building a config programmatically, e.g.
+// TelemetryConfig{Enabled: otx.BoolPtr(true)}.
+func BoolPtr(v bool) *bool { return &v }
+
 // boolPtr returns a pointer to the given boolean value.
 // It is useful for initializing config fields.
-func boolPtr(v bool) *bool { return &v }
+//
+//nolint:revive // confusing-naming: BoolPtr is the intentional exported wrapper.
+func boolPtr(v bool) *bool { return BoolPtr(v) }

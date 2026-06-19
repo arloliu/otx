@@ -23,9 +23,40 @@ var knownPropagators = map[string]bool{
 	"none":         true,
 }
 
+// contribPropagators maps the known-but-unimplemented propagator names to the
+// go.opentelemetry.io/contrib/propagators/* package that supplies them. otx does
+// not import these packages, so configuring one of these names installs nothing;
+// buildPropagator emits a diagnostic via otel.Handle pointing at the package the
+// caller must wire up themselves.
+var contribPropagators = map[string]string{
+	"b3":      "go.opentelemetry.io/contrib/propagators/b3",
+	"b3multi": "go.opentelemetry.io/contrib/propagators/b3",
+	"jaeger":  "go.opentelemetry.io/contrib/propagators/jaeger",
+	"xray":    "go.opentelemetry.io/contrib/propagators/aws/xray",
+	"ottrace": "go.opentelemetry.io/contrib/propagators/ot",
+}
+
+// BuildPropagator returns the OTel text map propagator derived from cfg — the
+// same propagator NewTracerProvider installs as the global propagator. It is
+// exported and side-effect-free (it does not mutate any OTel global) so callers
+// that export metrics or logs but not traces can install propagation
+// independently via otel.SetTextMapPropagator(otx.BuildPropagator(cfg)).
+//
+// A nil cfg yields the W3C default (tracecontext + baggage). Unknown propagator
+// names and the known-but-unimplemented b3/b3multi/jaeger/xray/ottrace names
+// emit a diagnostic via otel.Handle and are otherwise ignored.
+func BuildPropagator(cfg *PropConfig) propagation.TextMapPropagator {
+	return buildPropagator(cfg)
+}
+
 // buildPropagator creates a text map propagator based on configuration.
 // Supports OTel standard OTEL_PROPAGATORS values: tracecontext, baggage, b3, b3multi, jaeger, xray, ottrace
-// Unknown propagator names are reported via otel.Handle and ignored.
+// Unknown propagator names are reported via otel.Handle and ignored. The
+// b3/b3multi/jaeger/xray/ottrace names are recognized but not installed (they
+// require contrib packages otx does not import); each configured one emits a
+// diagnostic via otel.Handle and is otherwise ignored.
+//
+//nolint:revive // confusing-naming: BuildPropagator is the intentional exported wrapper.
 func buildPropagator(cfg *PropConfig) propagation.TextMapPropagator {
 	if cfg == nil {
 		cfg = &PropConfig{Propagators: "tracecontext,baggage"}
@@ -33,10 +64,14 @@ func buildPropagator(cfg *PropConfig) propagation.TextMapPropagator {
 
 	var propagators []propagation.TextMapPropagator
 
-	// Check for unknown propagators and warn
+	// Check for unknown and known-but-unimplemented propagators and warn.
 	for _, name := range splitPropagators(cfg.Propagators) {
-		if !knownPropagators[name] {
+		switch {
+		case !knownPropagators[name]:
 			otel.Handle(errors.New("otx: unknown propagator \"" + name + "\" in OTEL_PROPAGATORS, ignoring"))
+		case contribPropagators[name] != "":
+			otel.Handle(errors.New("otx: propagator \"" + name + "\" requires " + contribPropagators[name] +
+				"; not installed, ignoring"))
 		}
 	}
 

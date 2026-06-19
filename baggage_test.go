@@ -30,3 +30,52 @@ func TestBaggageHelpers(t *testing.T) {
 	val = GetBaggage(ctx, "key")
 	assert.Empty(t, val)
 }
+
+func TestAllBaggage(t *testing.T) {
+	t.Run("empty context", func(t *testing.T) {
+		bag := AllBaggage(context.Background())
+		assert.NotNil(t, bag)
+		assert.Empty(t, bag)
+	})
+
+	t.Run("multiple members", func(t *testing.T) {
+		ctx := context.Background()
+		ctx = MustSetBaggage(ctx, "alpha", "1")
+		ctx = MustSetBaggage(ctx, "beta", "2")
+
+		bag := AllBaggage(ctx)
+		assert.Equal(t, map[string]string{"alpha": "1", "beta": "2"}, bag)
+	})
+}
+
+func TestLookupBaggage(t *testing.T) {
+	ctx := context.Background()
+	ctx = MustSetBaggage(ctx, "present", "value")
+	ctx = MustSetBaggage(ctx, "empty", "")
+
+	t.Run("present with value", func(t *testing.T) {
+		val, ok := LookupBaggage(ctx, "present")
+		assert.True(t, ok)
+		assert.Equal(t, "value", val)
+	})
+
+	t.Run("present with empty value", func(t *testing.T) {
+		val, ok := LookupBaggage(ctx, "empty")
+		assert.True(t, ok)
+		assert.Empty(t, val)
+	})
+
+	t.Run("absent key", func(t *testing.T) {
+		val, ok := LookupBaggage(ctx, "missing")
+		assert.False(t, ok)
+		assert.Empty(t, val)
+	})
+
+	t.Run("distinguishes absent from empty value", func(t *testing.T) {
+		// GetBaggage returns "" for both, LookupBaggage's ok disambiguates.
+		_, okEmpty := LookupBaggage(ctx, "empty")
+		_, okAbsent := LookupBaggage(ctx, "missing")
+		assert.True(t, okEmpty)
+		assert.False(t, okAbsent)
+	})
+}

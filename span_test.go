@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestSpanHelpers(t *testing.T) {
@@ -62,6 +65,54 @@ func TestSpanHelpers(t *testing.T) {
 
 	// Test SetSuccess
 	SetSuccess(ctx)
+}
+
+func TestStartSpanKind(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+	})
+	InitTracing(tp.Tracer("otx-test"), DefaultNamer{})
+
+	// startFunc matches the signature of the StartServer/Client/... helpers.
+	type startFunc func(context.Context, string, ...trace.SpanStartOption) (context.Context, trace.Span)
+
+	// Each helper is exercised with zero extra options (the fast path) and
+	// with one extra option (the slow path); both must set the same span kind.
+	tests := []struct {
+		name     string
+		start    startFunc
+		wantKind trace.SpanKind
+	}{
+		{"server", StartServer, trace.SpanKindServer},
+		{"client", StartClient, trace.SpanKindClient},
+		{"internal", StartInternal, trace.SpanKindInternal},
+		{"producer", StartProducer, trace.SpanKindProducer},
+		{"consumer", StartConsumer, trace.SpanKindConsumer},
+	}
+
+	for _, tt := range tests {
+		for _, withOpts := range []bool{false, true} {
+			pathName := "zero-opts"
+
+			var extra []trace.SpanStartOption
+			if withOpts {
+				pathName = "with-opts"
+				extra = []trace.SpanStartOption{trace.WithNewRoot()}
+			}
+
+			t.Run(tt.name+"/"+pathName, func(t *testing.T) {
+				rec.Reset()
+				_, span := tt.start(context.Background(), "op", extra...)
+				span.End()
+
+				ended := rec.Ended()
+				require.Len(t, ended, 1)
+				assert.Equal(t, tt.wantKind, ended[0].SpanKind())
+			})
+		}
+	}
 }
 
 func TestInitTracing_NilNamer(t *testing.T) {

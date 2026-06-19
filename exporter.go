@@ -2,10 +2,16 @@ package otx
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"strings"
 	"time"
 
+	"sync"
+
 	"github.com/arloliu/otx/internal/endpoint"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -21,6 +27,12 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
+
+// ErrUnknownExporter is returned by the exporter builders when the configured
+// exporter type is not one of the recognized values (otlp, console/stdout,
+// none/nop). It is wrapped with the offending type for diagnostics; match it with
+// errors.Is(err, ErrUnknownExporter).
+var ErrUnknownExporter = errors.New("otx: unknown exporter type")
 
 // exporterParams holds common parameters for building exporters.
 type exporterParams struct {
@@ -65,6 +77,85 @@ func baseExporterParams(cfg *TelemetryConfig) exporterParams {
 	return params
 }
 
+// insecureWarned dedups the plaintext-to-remote diagnostic so each distinct
+// remote endpoint is reported at most once per process (the same endpoint is
+// resolved repeatedly across signals and provider re-creation).
+var (
+	insecureWarnMu sync.Mutex
+	insecureWarned = map[string]struct{}{}
+)
+
+// warnInsecureRemote emits a one-time otel.Handle diagnostic when params would
+// export plaintext (insecure, no https:// scheme) to a non-loopback host. An
+// https:// scheme forces TLS regardless of the Insecure flag, so URL endpoints
+// never warn. Loopback endpoints (localhost, 127.0.0.0/8, ::1) are the safe
+// default and never warn. Each distinct endpoint warns at most once.
+func warnInsecureRemote(params exporterParams) {
+	if !params.Insecure {
+		return
+	}
+	// https:// always forces TLS, so it is never a plaintext leak.
+	if k, err := endpoint.Classify(params.Endpoint); err == nil && k == endpoint.KindHTTPS {
+		return
+	}
+	if isLoopbackEndpoint(params.Endpoint) {
+		return
+	}
+
+	insecureWarnMu.Lock()
+	_, seen := insecureWarned[params.Endpoint]
+	if !seen {
+		insecureWarned[params.Endpoint] = struct{}{}
+	}
+	insecureWarnMu.Unlock()
+	if seen {
+		return
+	}
+
+	otel.Handle(fmt.Errorf(
+		"otx: OTLP exporter is configured insecure (plaintext) for non-loopback host %q; "+
+			"telemetry and any credential-bearing headers are sent without TLS. Set Insecure=false "+
+			"or use an https:// endpoint for remote collectors",
+		params.Endpoint,
+	))
+}
+
+// isLoopbackEndpoint reports whether the endpoint's host resolves to a loopback
+// address (localhost, 127.0.0.0/8, ::1). An empty endpoint is treated as
+// loopback because the protocol default is always localhost.
+func isLoopbackEndpoint(raw string) bool {
+	if raw == "" {
+		return true
+	}
+
+	host := raw
+	if k, err := endpoint.Classify(raw); err == nil && (k == endpoint.KindHTTP || k == endpoint.KindHTTPS) {
+		// Strip the scheme then fall through to host:port handling below.
+		if idx := strings.Index(host, "://"); idx >= 0 {
+			host = host[idx+len("://"):]
+		}
+	}
+
+	// Strip a trailing path on URL forms (e.g. host:port/v1/traces).
+	if idx := strings.IndexByte(host, '/'); idx >= 0 {
+		host = host[:idx]
+	}
+
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+
+	return false
+}
+
 // defaultEndpointFor returns the OTel-spec default OTLP endpoint for the given
 // protocol: gRPC uses 4317, everything else (http/protobuf, http) uses 4318.
 func defaultEndpointFor(protocol string) string {
@@ -94,7 +185,7 @@ func buildTraceExporter(ctx context.Context, cfg *TelemetryConfig) (sdktrace.Spa
 	case "otlp":
 		return buildOTLPTraceExporter(ctx, params)
 	default:
-		return buildOTLPTraceExporter(ctx, params)
+		return nil, fmt.Errorf("%w: %q", ErrUnknownExporter, params.Type)
 	}
 }
 
@@ -112,6 +203,8 @@ func resolveTraceExporterParams(cfg *TelemetryConfig) exporterParams {
 	if params.Endpoint == "" {
 		params.Endpoint = defaultEndpointFor(params.Protocol)
 	}
+
+	warnInsecureRemote(params)
 
 	return params
 }
@@ -165,7 +258,7 @@ func buildLogExporter(ctx context.Context, cfg *TelemetryConfig) (sdklog.Exporte
 	case "otlp":
 		return buildOTLPLogExporter(ctx, params)
 	default:
-		return buildOTLPLogExporter(ctx, params)
+		return nil, fmt.Errorf("%w: %q", ErrUnknownExporter, params.Type)
 	}
 }
 
@@ -190,6 +283,8 @@ func resolveLogExporterParams(cfg *TelemetryConfig) exporterParams {
 	if params.Endpoint == "" {
 		params.Endpoint = defaultEndpointFor(params.Protocol)
 	}
+
+	warnInsecureRemote(params)
 
 	return params
 }
@@ -236,7 +331,7 @@ func buildMetricExporter(ctx context.Context, cfg *TelemetryConfig) (sdkmetric.E
 	case "otlp":
 		return buildOTLPMetricExporter(ctx, params)
 	default:
-		return buildOTLPMetricExporter(ctx, params)
+		return nil, fmt.Errorf("%w: %q", ErrUnknownExporter, params.Type)
 	}
 }
 
@@ -258,6 +353,8 @@ func resolveMetricExporterParams(cfg *TelemetryConfig) exporterParams {
 	if params.Endpoint == "" {
 		params.Endpoint = defaultEndpointFor(params.Protocol)
 	}
+
+	warnInsecureRemote(params)
 
 	return params
 }
