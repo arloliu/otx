@@ -49,6 +49,23 @@ below before upgrading.
   across every resolver and the config loader.
 - **Changed (docs):** added the zap-logging guide and the zapwire-integration
   design doc.
+- **Added (audit hardening):** `BuildPropagator` (install W3C propagation without
+  the tracer constructor), the `LookupBaggage`, `BoolPtr`, and `http.WithOTelOptions`
+  helpers, the `ErrTracesDisabled` and `ErrUnknownExporter` sentinels, and NATS
+  `TracedMessageBatch.Stop` plus context-aware `FetchContext` / `NextContext` fetch
+  variants.
+- **Changed (audit hardening):** provider and exporter constructors now validate
+  endpoints up front (invalid programmatic config fails fast), an unknown exporter
+  type errors instead of silently falling back to OTLP, and NATS `Next()` parents
+  header-less messages under the receive span like `Fetch()`.
+- **Fixed (audit hardening):** NATS `WithProcessSpans(false)` is honored (was a
+  no-op); the message batch no longer leaks its forwarder goroutine on early exit
+  and is race-free on first use; configured-but-unwired propagators (b3, jaeger, …)
+  now warn instead of silently dropping context; `zaplog` `NewCore` / `Attach` no
+  longer panic on nil input and disabled-level context logging no longer allocates;
+  plaintext export to a remote host warns; several non-compiling doc examples fixed.
+- **Performance (audit hardening):** cached span-kind options, pre-sized baggage
+  maps, and one-time HTTP middleware construction.
 
 ## v1.0.2 — 2026-02-19
 
