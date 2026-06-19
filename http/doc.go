@@ -5,7 +5,7 @@
 // Use middleware to instrument HTTP handlers:
 //
 //	// Standard net/http
-//	http.Handle("/api", otxhttp.Middleware("api-server")(myHandler))
+//	http.Handle("/api", otxhttp.Middleware()(myHandler))
 //
 //	// Explicit verification of providers
 //	http.Handle("/api", otxhttp.MiddlewareWithProviders(tp, mp, prop)(myHandler))

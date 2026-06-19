@@ -20,7 +20,7 @@ import (
 //
 // Usage:
 //
-//	http.Handle("/api", http.Handler(myHandler, "api.request"))
+//	http.Handle("/api", otxhttp.Handler(myHandler, "api.request"))
 func Handler(handler http.Handler, operation string, opts ...otelhttp.Option) http.Handler {
 	return otelhttp.NewHandler(handler, operation, withOperationSpanName(operation, opts)...)
 }
@@ -70,8 +70,10 @@ func HandlerWithProviders(
 //
 //	http.Handle("/api", http.Middleware()(myHandler))
 func Middleware(opts ...otelhttp.Option) func(http.Handler) http.Handler {
+	mw := otelhttp.NewMiddleware("http.request", withOperationSpanName("http.request", opts)...)
+
 	return func(next http.Handler) http.Handler {
-		return otelhttp.NewMiddleware("http.request", withOperationSpanName("http.request", opts)...)(next)
+		return mw(next)
 	}
 }
 
@@ -101,8 +103,10 @@ func MiddlewareWithProviders(
 	allOpts := buildProviderOptions(tp, mp, prop)
 	allOpts = append(allOpts, opts...)
 
+	mw := otelhttp.NewMiddleware("http.request", withOperationSpanName("http.request", allOpts)...)
+
 	return func(next http.Handler) http.Handler {
-		return otelhttp.NewMiddleware("http.request", withOperationSpanName("http.request", allOpts)...)(next)
+		return mw(next)
 	}
 }
 

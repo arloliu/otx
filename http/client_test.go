@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
@@ -59,6 +60,61 @@ func TestNewClientWithOptions(t *testing.T) {
 
 	// Unwrap otel transport to check underlying transport
 	assert.NotNil(t, client.Transport)
+}
+
+func TestNewClientWithOTelOptions(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(trace.WithSyncer(exporter))
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	// A custom span-name formatter must reach the underlying otel transport
+	// when supplied through WithOTelOptions.
+	client := NewClient(
+		WithOTelOptions(otelhttp.WithSpanNameFormatter(func(string, *http.Request) string {
+			return "custom.client.span"
+		})),
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	resp, err := client.Get(server.URL)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "custom.client.span", spans[0].Name)
+}
+
+func TestNewClientWithProvidersOTelOptions(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := trace.NewTracerProvider(trace.WithSyncer(exporter))
+	mp := noop.NewMeterProvider()
+	prop := propagation.TraceContext{}
+
+	client := NewClientWithProviders(
+		tp, mp, prop,
+		WithOTelOptions(otelhttp.WithSpanNameFormatter(func(string, *http.Request) string {
+			return "custom.client.span"
+		})),
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	resp, err := client.Get(server.URL)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "custom.client.span", spans[0].Name)
 }
 
 func TestNewClientWithProviders(t *testing.T) {

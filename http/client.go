@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -29,6 +30,9 @@ type clientConfig struct {
 
 	// Base transport (before OTel wrapping)
 	baseTransport http.RoundTripper
+
+	// Options forwarded to the underlying otelhttp.Transport.
+	otelOpts []otelhttp.Option
 }
 
 // ClientOption configures an HTTP client.
@@ -98,11 +102,37 @@ func WithIdleConnTimeout(d time.Duration) ClientOption {
 	}
 }
 
-// WithTransport sets a custom base transport options.
-// Note: Transport timeouts/settings configured here will override other options if set on this transport.
+// WithTransport sets a custom base RoundTripper to wrap with OTel tracing.
+//
+// Precedence depends on the concrete type of rt:
+//   - If rt is an *http.Transport, it is Clone()d and the otx transport
+//     options (WithDialTimeout, WithMaxIdleConns, etc.) are applied on top of
+//     the clone. The otx options take precedence over any matching field
+//     already set on rt.
+//   - If rt is any other RoundTripper, it is used as-is and all transport-level
+//     otx options are ignored, because they cannot be applied to an opaque
+//     RoundTripper.
+//
+// Parameters:
+//   - rt: the base RoundTripper to wrap; nil leaves the default in effect.
 func WithTransport(rt http.RoundTripper) ClientOption {
 	return func(c *clientConfig) {
 		c.baseTransport = rt
+	}
+}
+
+// WithOTelOptions forwards otelhttp.Option values to the underlying OTel
+// transport created by [NewClient] / [NewClientWithProviders].
+//
+// This makes client-side options such as otelhttp.WithSpanNameFormatter or
+// otelhttp.WithFilter reachable from the convenience constructors, matching the
+// server-side [Handler] / [Middleware] surface.
+//
+// Parameters:
+//   - opts: otelhttp options applied to the transport in order.
+func WithOTelOptions(opts ...otelhttp.Option) ClientOption {
+	return func(c *clientConfig) {
+		c.otelOpts = append(c.otelOpts, opts...)
 	}
 }
 
@@ -130,7 +160,7 @@ func NewClient(opts ...ClientOption) *http.Client {
 	}
 
 	transport := buildTransport(config)
-	otelTransport := Transport(transport)
+	otelTransport := Transport(transport, config.otelOpts...)
 
 	return &http.Client{
 		Transport: otelTransport,
@@ -166,7 +196,7 @@ func NewClientWithProviders(
 	}
 
 	transport := buildTransport(config)
-	otelTransport := TransportWithProviders(transport, tp, mp, prop)
+	otelTransport := TransportWithProviders(transport, tp, mp, prop, config.otelOpts...)
 
 	return &http.Client{
 		Transport: otelTransport,
@@ -174,7 +204,16 @@ func NewClientWithProviders(
 	}
 }
 
-// buildTransport configures the underlying transport based on config
+// buildTransport configures the underlying transport based on config.
+//
+// When the base is an *http.Transport (including the default), it is Clone()d
+// and the transport-pool / timeout options are applied on top of the clone.
+//
+// When the base is any other RoundTripper, it is returned verbatim and all
+// transport-level otx options (dial / TLS / response-header / connection-pool
+// timeouts) are silently ignored, because they cannot be applied to an opaque
+// RoundTripper. Callers needing those settings must supply an *http.Transport
+// base.
 func buildTransport(c *clientConfig) http.RoundTripper {
 	var transport *http.Transport
 
@@ -187,8 +226,9 @@ func buildTransport(c *clientConfig) http.RoundTripper {
 	} else if t, ok := c.baseTransport.(*http.Transport); ok {
 		transport = t.Clone()
 	} else {
-		// Not an http.Transport (e.g. custom RoundTripper), just return it
-		// We can't apply transport-level timeouts to an opaque RoundTripper
+		// Not an *http.Transport (e.g. a custom RoundTripper): return it as-is.
+		// Transport-level otx options cannot be applied to an opaque
+		// RoundTripper, so they are ignored here (see WithTransport docs).
 		return c.baseTransport
 	}
 
