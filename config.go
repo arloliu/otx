@@ -160,6 +160,21 @@ type LogsConfig struct {
 	// It gates log-export cost (e.g. "warn" ships only warn and above).
 	// Defaults to "info" when empty. Ignored by the SDK log pipeline.
 	MinLevel string `yaml:"minLevel,omitempty" json:"minLevel,omitempty" validate:"omitempty,oneof=debug info warn error dpanic panic fatal"`
+
+	// DrainTimeout bounds the total time w.Sync()/w.Close() spend draining the
+	// zapwire queue at shutdown before dropping the remainder (dropped count
+	// accumulates in the writer's DroppedLogs counter). This caps the worst-case
+	// shutdown latency a stalled or slow receiver can impose.
+	//
+	// The bound is soft: an export attempt already in flight still runs to its
+	// Timeout deadline, so the effective ceiling is DrainTimeout + at most one
+	// in-flight request. A healthy receiver completes the drain long before the
+	// bound; the option only trims a hostile or broken receiver's tail.
+	//
+	// Zero (default) keeps the legacy unbounded behaviour: Sync waits until
+	// every queued record is exported or dropped by retry exhaustion. Applies
+	// only to the otx/zaplog zapwire data plane; ignored by the SDK log pipeline.
+	DrainTimeout time.Duration `yaml:"drainTimeout,omitempty" json:"drainTimeout,omitempty" validate:"gte=0"`
 }
 
 // IsEnabled returns true if OTel log export is enabled.
