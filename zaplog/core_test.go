@@ -333,6 +333,23 @@ func TestNewCore_HeadersTimeoutGzipReachWire(t *testing.T) {
 	assert.Equal(t, "hello", recs[0].GetBody().GetStringValue())
 }
 
+func TestNewCore_DrainTimeoutWires(t *testing.T) {
+	cfg := httpCfg("")
+	cfg.Logs.DrainTimeout = 5 * time.Second
+
+	cs := emitAndFlush(t, cfg)
+	assert.Len(t, cs.allRecords(), 1, "record must reach wire with DrainTimeout set")
+}
+
+func TestNewCore_DrainTimeoutZeroIsNoop(t *testing.T) {
+	// Zero (default) must produce no behavior change — core constructs and exports fine.
+	cfg := httpCfg("")
+	// cfg.Logs.DrainTimeout is zero by default
+
+	cs := emitAndFlush(t, cfg)
+	assert.Len(t, cs.allRecords(), 1)
+}
+
 func TestNewCore_HTTPAliasProtocol(t *testing.T) {
 	cfg := httpCfg("")
 	cfg.OTLP.Protocol = "http" // alias -> http/protobuf, must not be rejected

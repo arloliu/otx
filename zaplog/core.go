@@ -84,6 +84,11 @@ const (
 // string) and then to zapcore.InfoLevel — it never passes nil to the otlp core,
 // whose Check would panic. Pass a *zap.AtomicLevel for a runtime cost dial.
 //
+// When cfg.Logs.DrainTimeout > 0, WithDrainTimeout is appended to the merged
+// option list, capping the total time w.Sync()/w.Close() spend draining the
+// queue (a soft bound: one in-flight request may still run to its Timeout).
+// Zero keeps zapwire's default unbounded drain.
+//
 // The caller owns the returned *otlp.Writer and must Close it; the recommended
 // shutdown is w.Sync() then w.Close().
 func NewCore(
@@ -124,6 +129,9 @@ func NewCore(
 	}
 	if base.Compression == "gzip" {
 		merged = append(merged, otlp.WithCompression(otlp.Gzip))
+	}
+	if cfg.Logs != nil && cfg.Logs.DrainTimeout > 0 {
+		merged = append(merged, otlp.WithDrainTimeout(cfg.Logs.DrainTimeout))
 	}
 	merged = append(merged, opts...)
 
