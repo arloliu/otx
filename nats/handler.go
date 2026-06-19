@@ -62,6 +62,15 @@ func MessageHandlerWithTracingProviders(
 			parentCtx = propagator.Extract(parentCtx, headerCarrier(headers))
 		}
 
+		// Honor WithProcessSpans(false): skip process-span creation entirely and
+		// hand the handler the extracted parent context so downstream propagation
+		// still works.
+		if !o.processSpans {
+			handler(&TracedMsg{Msg: msg, ctx: parentCtx})
+
+			return
+		}
+
 		// Extract message metadata for span attributes
 		stream := ""
 		consumerName := ""

@@ -68,7 +68,9 @@ func (tc *TracedConsumer) Info(ctx context.Context) (*jetstream.ConsumerInfo, er
 	return tc.consumer.Info(ctx)
 }
 
-func (tc *TracedConsumer) startFetchSpan() (context.Context, trace.Span) {
+// startFetchSpanCtx starts a receive span as a child of the supplied context,
+// allowing the span to nest under an ambient caller span.
+func (tc *TracedConsumer) startFetchSpanCtx(ctx context.Context) (context.Context, trace.Span) {
 	consumerName := ""
 	if info := tc.consumer.CachedInfo(); info != nil {
 		consumerName = info.Name
@@ -76,17 +78,25 @@ func (tc *TracedConsumer) startFetchSpan() (context.Context, trace.Span) {
 
 	spanName := opTypeReceive + " " + tc.stream
 
-	return tc.tracer.Start(context.Background(), spanName,
+	return tc.tracer.Start(ctx, spanName,
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(receiveAttributes(tc.stream, consumerName, 0)...),
 	)
 }
 
 // wrapBatch wraps a MessageBatch with tracing support.
+//
+// ctx carries the receive span used to parent extracted message contexts; it is
+// also used as the parent of the batch's internal cancellation context so that a
+// cancelled caller context terminates the forwarder goroutine.
 func (tc *TracedConsumer) wrapBatch(ctx context.Context, batch jetstream.MessageBatch) *TracedMessageBatch {
+	cancelCtx, cancel := context.WithCancel(ctx)
+
 	return &TracedMessageBatch{
 		batch:      batch,
 		ctx:        ctx,
+		cancelCtx:  cancelCtx,
+		cancel:     cancel,
 		opts:       tc.opts,
 		stream:     tc.stream,
 		extractCtx: tc.extractContext,
@@ -95,8 +105,22 @@ func (tc *TracedConsumer) wrapBatch(ctx context.Context, batch jetstream.Message
 
 // Fetch retrieves a batch of messages with tracing.
 // Returns a TracedMessageBatch where each message has trace context extracted.
+//
+// Deprecated: use FetchContext to allow the receive span to nest under an
+// ambient context and to provide a cancelable context for the batch forwarder.
 func (tc *TracedConsumer) Fetch(batch int, opts ...jetstream.FetchOpt) (*TracedMessageBatch, error) {
-	ctx, span := tc.startFetchSpan()
+	return tc.FetchContext(context.Background(), batch, opts...)
+}
+
+// FetchContext retrieves a batch of messages with tracing, starting the receive
+// span as a child of ctx. The returned batch's forwarder is cancelled if ctx is
+// cancelled (or via TracedMessageBatch.Stop()).
+func (tc *TracedConsumer) FetchContext(
+	ctx context.Context,
+	batch int,
+	opts ...jetstream.FetchOpt,
+) (*TracedMessageBatch, error) {
+	spanCtx, span := tc.startFetchSpanCtx(ctx)
 
 	msgBatch, err := tc.consumer.Fetch(batch, opts...)
 	if err != nil {
@@ -109,12 +133,25 @@ func (tc *TracedConsumer) Fetch(batch int, opts ...jetstream.FetchOpt) (*TracedM
 
 	span.End()
 
-	return tc.wrapBatch(ctx, msgBatch), nil
+	return tc.wrapBatch(spanCtx, msgBatch), nil
 }
 
 // FetchBytes retrieves messages up to maxBytes with tracing.
+//
+// Deprecated: use FetchBytesContext to allow the receive span to nest under an
+// ambient context and to provide a cancelable context for the batch forwarder.
 func (tc *TracedConsumer) FetchBytes(maxBytes int, opts ...jetstream.FetchOpt) (*TracedMessageBatch, error) {
-	ctx, span := tc.startFetchSpan()
+	return tc.FetchBytesContext(context.Background(), maxBytes, opts...)
+}
+
+// FetchBytesContext retrieves messages up to maxBytes with tracing, starting the
+// receive span as a child of ctx.
+func (tc *TracedConsumer) FetchBytesContext(
+	ctx context.Context,
+	maxBytes int,
+	opts ...jetstream.FetchOpt,
+) (*TracedMessageBatch, error) {
+	spanCtx, span := tc.startFetchSpanCtx(ctx)
 
 	msgBatch, err := tc.consumer.FetchBytes(maxBytes, opts...)
 	if err != nil {
@@ -127,12 +164,21 @@ func (tc *TracedConsumer) FetchBytes(maxBytes int, opts ...jetstream.FetchOpt) (
 
 	span.End()
 
-	return tc.wrapBatch(ctx, msgBatch), nil
+	return tc.wrapBatch(spanCtx, msgBatch), nil
 }
 
 // FetchNoWait retrieves available messages without waiting.
+//
+// Deprecated: use FetchNoWaitContext to allow the receive span to nest under an
+// ambient context and to provide a cancelable context for the batch forwarder.
 func (tc *TracedConsumer) FetchNoWait(batch int) (*TracedMessageBatch, error) {
-	ctx, span := tc.startFetchSpan()
+	return tc.FetchNoWaitContext(context.Background(), batch)
+}
+
+// FetchNoWaitContext retrieves available messages without waiting, starting the
+// receive span as a child of ctx.
+func (tc *TracedConsumer) FetchNoWaitContext(ctx context.Context, batch int) (*TracedMessageBatch, error) {
+	spanCtx, span := tc.startFetchSpanCtx(ctx)
 
 	msgBatch, err := tc.consumer.FetchNoWait(batch)
 	if err != nil {
@@ -145,11 +191,23 @@ func (tc *TracedConsumer) FetchNoWait(batch int) (*TracedMessageBatch, error) {
 
 	span.End()
 
-	return tc.wrapBatch(ctx, msgBatch), nil
+	return tc.wrapBatch(spanCtx, msgBatch), nil
 }
 
 // Messages returns an iterator for continuous message consumption with tracing.
+//
+// Deprecated: use MessagesWithContext so extracted message contexts can nest
+// under an ambient context.
 func (tc *TracedConsumer) Messages(opts ...jetstream.PullMessagesOpt) (*TracedMessagesContext, error) {
+	return tc.MessagesWithContext(context.Background(), opts...)
+}
+
+// MessagesWithContext returns an iterator for continuous message consumption
+// with tracing. The supplied ctx parents the extracted message contexts.
+func (tc *TracedConsumer) MessagesWithContext(
+	ctx context.Context,
+	opts ...jetstream.PullMessagesOpt,
+) (*TracedMessagesContext, error) {
 	messagesCtx, err := tc.consumer.Messages(opts...)
 	if err != nil {
 		return nil, err
@@ -157,7 +215,7 @@ func (tc *TracedConsumer) Messages(opts ...jetstream.PullMessagesOpt) (*TracedMe
 
 	return &TracedMessagesContext{
 		messagesCtx: messagesCtx,
-		ctx:         context.Background(),
+		ctx:         ctx,
 		opts:        tc.opts,
 		stream:      tc.stream,
 		extractCtx:  tc.extractContext,
@@ -165,8 +223,21 @@ func (tc *TracedConsumer) Messages(opts ...jetstream.PullMessagesOpt) (*TracedMe
 }
 
 // Next retrieves a single message with tracing.
+//
+// Deprecated: use NextContext to allow the receive span to nest under an ambient
+// context.
 func (tc *TracedConsumer) Next(opts ...jetstream.FetchOpt) (*TracedMsg, error) {
-	_, span := tc.startFetchSpan()
+	return tc.NextContext(context.Background(), opts...)
+}
+
+// NextContext retrieves a single message with tracing, starting the receive span
+// as a child of ctx.
+//
+// The returned message's context descends from the receive span: when the
+// message carries no propagated trace headers it is parented to the receive
+// span (matching Fetch's behavior) rather than being a root.
+func (tc *TracedConsumer) NextContext(ctx context.Context, opts ...jetstream.FetchOpt) (*TracedMsg, error) {
+	spanCtx, span := tc.startFetchSpanCtx(ctx)
 
 	msg, err := tc.consumer.Next(opts...)
 	if err != nil {
@@ -181,7 +252,7 @@ func (tc *TracedConsumer) Next(opts ...jetstream.FetchOpt) (*TracedMsg, error) {
 
 	return &TracedMsg{
 		Msg: msg,
-		ctx: tc.extractContext(context.Background(), msg),
+		ctx: tc.extractContext(spanCtx, msg),
 	}, nil
 }
 

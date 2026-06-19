@@ -2,6 +2,7 @@ package nats
 
 import (
 	"context"
+	"sync"
 
 	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/otel"
@@ -55,11 +56,20 @@ func (m *TracedMsg) StartProcessSpan(opts ...Option) (context.Context, func(erro
 
 // StartProcessSpanWithTracer creates a process span using the provided TracerProvider.
 // If tp is nil, the global TracerProvider is used.
+//
+// When WithProcessSpans(false) is set, no span is created: the message's own
+// context is returned unchanged together with a no-op end function.
 func (m *TracedMsg) StartProcessSpanWithTracer(
 	tp trace.TracerProvider,
 	opts ...Option,
 ) (context.Context, func(error)) {
 	o := applyOptions(opts)
+
+	// Honor WithProcessSpans(false): suppress span creation.
+	if !o.processSpans {
+		return m.Context(), func(error) {}
+	}
+
 	tracer := getTracer(tp, o)
 
 	// Extract message metadata for attributes
@@ -151,10 +161,18 @@ func NewTracedMsgWithPropagator(msg jetstream.Msg, prop propagation.TextMapPropa
 }
 
 // TracedMessageBatch wraps a jetstream.MessageBatch with tracing support.
+//
+// Callers MUST consume Messages() until the channel is closed, or call Stop()
+// to release the internal forwarder goroutine. Abandoning the channel without
+// draining it and without calling Stop() leaks the forwarder, because the
+// underlying unbuffered send blocks forever waiting for a reader.
 type TracedMessageBatch struct {
 	batch      jetstream.MessageBatch
 	msgChan    chan *TracedMsg
 	ctx        context.Context
+	cancelCtx  context.Context
+	cancel     context.CancelFunc
+	startOnce  sync.Once
 	opts       options
 	stream     string
 	extractCtx func(context.Context, jetstream.Msg) context.Context
@@ -163,26 +181,57 @@ type TracedMessageBatch struct {
 // Messages returns a channel of traced messages.
 // The channel blocks until messages arrive or the batch completes.
 // Always check Error() after the channel closes to detect fetch failures.
+//
+// The forwarder goroutine is started exactly once; concurrent first calls all
+// observe the same channel. If the caller stops draining the channel early, it
+// MUST call Stop() to terminate the forwarder.
 func (b *TracedMessageBatch) Messages() <-chan *TracedMsg {
-	if b.msgChan != nil {
-		return b.msgChan
-	}
+	b.startOnce.Do(func() {
+		b.msgChan = make(chan *TracedMsg)
 
-	b.msgChan = make(chan *TracedMsg)
+		go b.forward()
+	})
 
-	go func() {
-		defer close(b.msgChan)
+	return b.msgChan
+}
 
-		for msg := range b.batch.Messages() {
+// forward drains the underlying batch into msgChan, honoring cancellation so an
+// abandoned channel does not leak the goroutine.
+func (b *TracedMessageBatch) forward() {
+	defer close(b.msgChan)
+
+	for {
+		select {
+		case <-b.cancelCtx.Done():
+			return
+		case msg, ok := <-b.batch.Messages():
+			if !ok {
+				return
+			}
+
 			tracedMsg := &TracedMsg{
 				Msg: msg,
 				ctx: b.extractCtx(b.ctx, msg),
 			}
-			b.msgChan <- tracedMsg
-		}
-	}()
 
-	return b.msgChan
+			select {
+			case b.msgChan <- tracedMsg:
+			case <-b.cancelCtx.Done():
+				return
+			}
+		}
+	}
+}
+
+// Stop terminates the forwarder goroutine started by Messages().
+//
+// Use it when abandoning the batch before the channel is fully drained (for
+// example on an error mid-loop). Stop is safe to call multiple times and safe
+// to call even if Messages() was never invoked.
+func (b *TracedMessageBatch) Stop() {
+	if b.cancel != nil {
+		b.cancel()
+	}
 }
 
 // Error returns any error that occurred during the fetch operation.

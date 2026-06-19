@@ -6,6 +6,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -90,9 +91,10 @@ func (p *Publisher) Publish(
 		return nil, err
 	}
 
-	// Add message ID from ack if available
+	// Add message ID from ack if available. Only the message.id attribute needs
+	// to be set; the base attributes were already recorded at span start.
 	if ack != nil {
-		span.SetAttributes(publishAttributes(subject, strconv.FormatUint(ack.Sequence, 10), 0)...)
+		span.SetAttributes(attribute.String(attrMessagingMessageID, strconv.FormatUint(ack.Sequence, 10)))
 	}
 
 	return ack, nil
@@ -130,7 +132,7 @@ func (p *Publisher) PublishMsg(
 	}
 
 	if ack != nil {
-		span.SetAttributes(publishAttributes(subject, strconv.FormatUint(ack.Sequence, 10), 0)...)
+		span.SetAttributes(attribute.String(attrMessagingMessageID, strconv.FormatUint(ack.Sequence, 10)))
 	}
 
 	return ack, nil

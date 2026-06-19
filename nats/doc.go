@@ -20,13 +20,26 @@
 //	consumer, _ := stream.CreateConsumer(ctx, cfg)
 //	traced := nats.WrapConsumer(consumer, "ORDERS")
 //
-//	msgs, _ := traced.Fetch(10)
+//	msgs, _ := traced.FetchContext(ctx, 10)
 //	for msg := range msgs.Messages() {
 //	    processOrder(msg.Context(), msg.Data())
 //	    msg.Ack()
 //	}
 //	if err := msgs.Error(); err != nil {
 //	    log.Error("fetch error", err)
+//	}
+//
+// Callers must drain the Messages() channel until it closes, or call Stop() when
+// abandoning the batch early (for example on an error mid-loop). Otherwise the
+// internal forwarder goroutine blocks forever on the undrained channel:
+//
+//	msgs, _ := traced.FetchContext(ctx, 10)
+//	defer msgs.Stop() // safe even after a full drain
+//	for msg := range msgs.Messages() {
+//	    if err := processOrder(msg.Context(), msg.Data()); err != nil {
+//	        return err // Stop() releases the forwarder
+//	    }
+//	    msg.Ack()
 //	}
 //
 // # Callback-Style Consumption
