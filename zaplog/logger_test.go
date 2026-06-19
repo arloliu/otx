@@ -113,6 +113,118 @@ func TestWrap_IdentityPreserved(t *testing.T) {
 	require.Same(t, l, Wrap(l).Logger)
 }
 
+// TestAttach_NilLogger verifies that Attach with a nil *zap.Logger returns a
+// usable logger over the OTLP core instead of panicking.
+func TestAttach_NilLogger(t *testing.T) {
+	cs := newCaptureServer(t)
+	cfg := httpCfg(cs.Server.URL)
+
+	core, w, err := NewCore(context.Background(), cfg, zapcore.InfoLevel)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = w.Close() })
+
+	var teed *zap.Logger
+	require.NotPanics(t, func() { teed = Attach(nil, core) })
+	require.NotNil(t, teed)
+
+	teed.Info("nil-base")
+	require.NoError(t, w.Sync())
+
+	recs := cs.allRecords()
+	require.Len(t, recs, 1)
+	assert.Equal(t, "nil-base", recs[0].GetBody().GetStringValue())
+}
+
+// recordingCore counts Check calls and captures the fields handed to Write so a
+// test can prove the ctx-aware methods only inject trace fields for entries that
+// pass the level gate.
+type recordingCore struct {
+	zapcore.LevelEnabler
+	mu      sync.Mutex
+	written [][]zapcore.Field
+}
+
+func (c *recordingCore) With(_ []zapcore.Field) zapcore.Core { return c }
+
+func (c *recordingCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if c.Enabled(ent.Level) {
+		return ce.AddCore(ent, c)
+	}
+
+	return ce
+}
+
+func (c *recordingCore) Write(_ zapcore.Entry, fields []zapcore.Field) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.written = append(c.written, fields)
+
+	return nil
+}
+
+func (*recordingCore) Sync() error { return nil }
+
+func (c *recordingCore) snapshot() [][]zapcore.Field {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([][]zapcore.Field, len(c.written))
+	copy(out, c.written)
+
+	return out
+}
+
+// TestLogger_CtxMethods_PreGateLevel verifies the ctx-aware methods do not write
+// (and therefore do not inject trace fields) when the level is disabled, while
+// an enabled-level call still injects the span_context field.
+func TestLogger_CtxMethods_PreGateLevel(t *testing.T) {
+	rc := &recordingCore{LevelEnabler: zapcore.WarnLevel}
+	log := Logger{Logger: zap.New(rc)}
+	ctx, _, _ := ctxWithTrace(t, "0123456789abcdef0123456789abcdef", "0123456789abcdef")
+
+	// Disabled level: no Write, hence no trace-field injection reaches a core.
+	log.DebugCtx(ctx, "dropped")
+	log.InfoCtx(ctx, "dropped")
+	written := rc.snapshot()
+	require.Empty(t, written, "disabled-level ctx call must not write any entry")
+
+	// Enabled level: the span_context field must be injected.
+	log.WarnCtx(ctx, "kept", zap.String("user", "alice"))
+	log.ErrorCtx(ctx, "kept")
+	written = rc.snapshot()
+	require.Len(t, written, 2)
+	for _, fields := range written {
+		assert.True(t, hasSpanContextField(fields),
+			"enabled-level ctx call must inject the span_context field")
+	}
+	// The caller's own field is preserved alongside the injected one.
+	assert.Equal(t, "user", written[0][0].Key)
+}
+
+// TestLogger_CtxMethods_DisabledLevel_NoAlloc pins the perf property behind the
+// pre-gate: a disabled-level ctx call must not allocate. The pre-`Check` version
+// called otlp.InjectTraceFields unconditionally, which allocates a field slice
+// plus a boxed span context, so a regression to that shape trips this guard.
+func TestLogger_CtxMethods_DisabledLevel_NoAlloc(t *testing.T) {
+	rc := &recordingCore{LevelEnabler: zapcore.WarnLevel}
+	log := Logger{Logger: zap.New(rc)}
+	ctx, _, _ := ctxWithTrace(t, "0123456789abcdef0123456789abcdef", "0123456789abcdef")
+
+	allocs := testing.AllocsPerRun(100, func() {
+		log.DebugCtx(ctx, "dropped")
+	})
+	assert.Zero(t, allocs, "disabled-level ctx log must not allocate (pre-gate bypassed)")
+}
+
+func hasSpanContextField(fields []zapcore.Field) bool {
+	for _, f := range fields {
+		if f.Key == "span_context" {
+			return true
+		}
+	}
+
+	return false
+}
+
 // ctxWithTrace builds a context carrying a valid, sampled span context from the
 // given hex IDs.
 func ctxWithTrace(t *testing.T, traceHex, spanHex string) (context.Context, trace.TraceID, trace.SpanID) {

@@ -56,13 +56,14 @@ const (
 
 // NewCore builds a zapwire OTLP core and its writer from otx telemetry config.
 //
-// The effective endpoint, protocol, TLS mode, headers, timeout, and compression
-// are resolved through the same wholesale + per-signal-overlay chain otx's SDK
-// log exporter uses: the base is cfg.GetOTLPConfig() (returned as-is when an
-// OTLP block is set, else converted from the deprecated Exporter block), and
-// Logs.Endpoint / Logs.Protocol overlay it per field. The resolved transport
-// settings become config-derived otlp options applied BEFORE the caller's opts,
-// so an explicit caller option always wins.
+// The base transport settings — TLS mode (via Insecure), headers, timeout, and
+// compression — are taken wholesale from cfg.GetOTLPConfig() (returned as-is
+// when an OTLP block is set, else converted from the deprecated Exporter block);
+// there is no per-signal Logs overlay for those fields. Only the endpoint and
+// protocol have per-signal Logs overlays: Logs.Endpoint and Logs.Protocol
+// override the base when set. The resolved transport settings become
+// config-derived otlp options applied BEFORE the caller's opts, so an explicit
+// caller option always wins.
 //
 // Protocol routing: when the effective protocol is "grpc", NewCore calls
 // otlp.NewGRPCCore — zapwire's hand-rolled OTLP/gRPC client (zero grpc-go in
@@ -97,6 +98,10 @@ func NewCore(
 	level zapcore.LevelEnabler,
 	opts ...otlp.Option,
 ) (zapcore.Core, *otlp.Writer, error) {
+	if cfg == nil {
+		return nil, nil, fmt.Errorf("zaplog: NewCore requires a non-nil *otx.TelemetryConfig")
+	}
+
 	base := cfg.GetOTLPConfig()
 
 	// Resolve protocol BEFORE endpoint — the default endpoint depends on protocol.

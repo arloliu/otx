@@ -19,6 +19,16 @@ import (
 	"google.golang.org/grpc"
 )
 
+// TestNewCore_NilConfig verifies NewCore returns a wrapped error (not a panic)
+// when cfg is nil, matching the nil-safe contract of the config accessors.
+func TestNewCore_NilConfig(t *testing.T) {
+	core, w, err := NewCore(context.Background(), nil, zapcore.InfoLevel)
+	require.Error(t, err)
+	require.Nil(t, core)
+	require.Nil(t, w)
+	assert.Contains(t, err.Error(), "zaplog")
+}
+
 // baseCfg is a minimal enabled config pointing logs at the given http endpoint.
 func httpCfg(endpoint string) *otx.TelemetryConfig {
 	return &otx.TelemetryConfig{
