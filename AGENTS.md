@@ -27,5 +27,8 @@ Read `.agents/rules/AGENTS.md` first — it maps task triggers to rule files. Al
 
 1. `go fix ./<changed-pkg>/...` (touched packages only).
 2. `make lint` — fix all issues. Never invoke golangci-lint directly or edit `.golangci.yaml`.
-3. `make test` (`go test ./...`) must pass. Add `go test -race ./...` for concurrency-sensitive changes — the default target does not enable `-race`.
+3. `make test` must pass. It runs `go test -race ./...` over the root module **and** the nested
+   integration module (`nats/internal/integration`, embedded NATS server), so `-race` and the
+   integration suite are always exercised. `make lint-integration` lints the nested module
+   (`make lint` does not descend into it).
 Never add `Co-Authored-By` or any attribution trailer to commits.

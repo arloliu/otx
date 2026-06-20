@@ -26,5 +26,10 @@ jobs:
       - name: Run linter
         run: make lint
 
+      - name: Run linter (integration module)
+        run: make lint-integration
+
+      # make test runs the race detector across the root and the nested
+      # integration module (embedded NATS server).
       - name: Run tests
         run: make test
