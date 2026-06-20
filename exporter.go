@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -289,8 +290,40 @@ func resolveLogExporterParams(cfg *TelemetryConfig) exporterParams {
 	return params
 }
 
+// otlpLogsPath is the OTel-standard URL path for the OTLP/HTTP logs signal.
+const otlpLogsPath = "/v1/logs"
+
+// withLogsPath ensures a URL-form OTLP endpoint targets the logs signal path.
+//
+// otlploghttp's WithEndpointURL (unlike the trace and metric exporters, which
+// share otlpconfig) uses the URL path verbatim and does NOT default an empty
+// path to /v1/logs. A bare "http://host:port" would therefore POST to "/" and
+// 404 against a real collector. We append /v1/logs when the URL carries no
+// explicit path. Bare host:port endpoints (which use WithEndpoint and default
+// the path themselves) and URLs with an explicit path are returned unchanged,
+// so this is forward-safe if the SDK later defaults the path itself.
+func withLogsPath(rawEndpoint string) string {
+	if !endpoint.IsHTTP(rawEndpoint) {
+		return rawEndpoint
+	}
+
+	u, err := url.Parse(rawEndpoint)
+	if err != nil {
+		return rawEndpoint
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = otlpLogsPath
+
+		return u.String()
+	}
+
+	return rawEndpoint
+}
+
 func buildOTLPLogExporter(ctx context.Context, params exporterParams) (sdklog.Exporter, error) {
 	if params.Protocol == "http/protobuf" || params.Protocol == "http" {
+		// Compensate for otlploghttp not defaulting the URL path to /v1/logs.
+		params.Endpoint = withLogsPath(params.Endpoint)
 		opts := buildHTTPOptions(
 			params,
 			otlploghttp.WithEndpoint,

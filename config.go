@@ -30,8 +30,11 @@ type TelemetryConfig struct {
 	Environment string `yaml:"environment" json:"environment" env:"OTEL_DEPLOYMENT_ENVIRONMENT" default:"development"`
 
 	// ResourceAttributes contains additional resource attributes as key=value pairs.
-	// Maps to OTEL_RESOURCE_ATTRIBUTES (comma-separated key=value pairs).
-	ResourceAttributes map[string]string `yaml:"resourceAttributes,omitempty" json:"resourceAttributes,omitempty" env:"OTEL_RESOURCE_ATTRIBUTES"`
+	// Maps to OTEL_RESOURCE_ATTRIBUTES (comma-separated key=value pairs, per the
+	// OTel spec). The env value is parsed by otx (see LoadConfig/ParseConfig) and,
+	// when set, fully replaces any value loaded from the config file. A legacy
+	// key:value form is also accepted for backward compatibility.
+	ResourceAttributes map[string]string `yaml:"resourceAttributes,omitempty" json:"resourceAttributes,omitempty"`
 
 	// OTLP contains shared OTLP exporter settings used by all signals (traces, logs, metrics).
 	// Signal-specific settings can override these.
@@ -90,9 +93,12 @@ type OTLPConfig struct {
 	Insecure *bool `yaml:"insecure" json:"insecure" env:"OTEL_EXPORTER_OTLP_INSECURE" default:"true"`
 
 	// Headers adds custom headers to OTLP requests.
-	// Maps to OTEL_EXPORTER_OTLP_HEADERS (comma-separated key=value pairs).
+	// Maps to OTEL_EXPORTER_OTLP_HEADERS (comma-separated key=value pairs, per the
+	// OTel spec). The env value is parsed by otx (see LoadConfig/ParseConfig) and,
+	// when set, fully replaces any value loaded from the config file. A legacy
+	// key:value form is also accepted for backward compatibility.
 	// Avoid logging this value, as it may contain sensitive credentials.
-	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty" env:"OTEL_EXPORTER_OTLP_HEADERS"`
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 
 	// Protocol determines the OTLP transport protocol.
 	// Maps to OTEL_EXPORTER_OTLP_PROTOCOL.
@@ -263,8 +269,9 @@ type ExporterConfig struct {
 	Insecure *bool `yaml:"insecure" json:"insecure" env:"OTEL_EXPORTER_OTLP_INSECURE" default:"true"`
 
 	// Headers adds custom headers to OTLP requests.
+	// Maps to OTEL_EXPORTER_OTLP_HEADERS; parsed by otx (see LoadConfig/ParseConfig).
 	// Avoid logging this value, as it may contain sensitive credentials.
-	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty" env:"OTEL_EXPORTER_OTLP_HEADERS"`
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 
 	// Protocol determines the OTLP transport protocol.
 	Protocol string `yaml:"protocol" json:"protocol" env:"OTEL_EXPORTER_OTLP_PROTOCOL" default:"grpc" validate:"omitempty,oneof=grpc http/protobuf http"`
