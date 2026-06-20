@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Root module.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  # Nested integration test module (embedded NATS server). Kept on its own
+  # schedule so its heavy test-only deps (nats-server) stay out of the root
+  # module while still receiving updates. Keep shared deps (nats.go, OTel SDK,
+  # testify) aligned with the root when bumping.
+  - package-ecosystem: gomod
+    directory: "/nats/internal/integration"
+    schedule:
+      interval: weekly
