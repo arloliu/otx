@@ -28,8 +28,8 @@ const (
 )
 
 // publishAttributes returns attributes for a publish operation span.
-func publishAttributes(subject string, msgID string, bodySize int) []attribute.KeyValue {
-	attrs := make([]attribute.KeyValue, 0, 6)
+func publishAttributes(subject string, bodySize int) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, 5)
 
 	attrs = append(attrs,
 		attribute.String(attrMessagingSystem, messagingSystem),
@@ -37,10 +37,6 @@ func publishAttributes(subject string, msgID string, bodySize int) []attribute.K
 		attribute.String(attrMessagingOperationType, opTypeSend),
 		attribute.String(attrMessagingDestinationName, subject),
 	)
-
-	if msgID != "" {
-		attrs = append(attrs, attribute.String(attrMessagingMessageID, msgID))
-	}
 
 	if bodySize > 0 {
 		attrs = append(attrs, attribute.Int(attrMessagingMessageBodySize, bodySize))

@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/nats-io/nats.go/jetstream"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -117,6 +116,3 @@ func MessageHandlerWithTracingProviders(
 		handler(tracedMsg)
 	}
 }
-
-// Ensure global OTel API is available for default usage.
-var _ = otel.GetTracerProvider

@@ -85,6 +85,10 @@ func applyOptions(opts []Option) options {
 }
 
 // getTracer returns a tracer from the provider with the configured name.
+//
+// On the default tracer name, an otx-configured global tracer (via tracker)
+// takes precedence over an explicit non-nil tp; a non-default name forced via
+// WithTracerName always uses the supplied tp (or the global provider when nil).
 func getTracer(tp trace.TracerProvider, opts options) trace.Tracer {
 	if opts.tracerName != instrumentationName {
 		if tp == nil {
