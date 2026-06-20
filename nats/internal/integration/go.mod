@@ -7,7 +7,7 @@ replace github.com/arloliu/otx => ../../..
 
 require (
 	github.com/arloliu/otx v0.0.0-00010101000000-000000000000
-	github.com/nats-io/nats-server/v2 v2.11.17
+	github.com/nats-io/nats-server/v2 v2.14.2
 	github.com/nats-io/nats.go v1.52.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.44.0
@@ -25,7 +25,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/minio/highwayhash v1.0.4 // indirect
-	github.com/nats-io/jwt/v2 v2.8.1 // indirect
+	github.com/nats-io/jwt/v2 v2.8.2 // indirect
 	github.com/nats-io/nkeys v0.4.16 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
