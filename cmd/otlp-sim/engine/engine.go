@@ -16,7 +16,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	otellog "go.opentelemetry.io/otel/log"
-	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -25,15 +24,12 @@ import (
 // errorHandler tracks export errors and reports them without flooding output.
 type errorHandler struct {
 	errorCount atomic.Int64
-	firstError atomic.Pointer[error]
 }
 
 // Handle implements otel.ErrorHandler.
 func (h *errorHandler) Handle(err error) {
 	count := h.errorCount.Add(1)
 	if count == 1 {
-		// Store first error for reporting
-		h.firstError.Store(&err)
 		fmt.Printf("Warning: OTLP export error: %v\n", err)
 	}
 }
@@ -200,7 +196,7 @@ func (e *Engine) generateSpan(
 
 	// Generate logs if enabled and provider available
 	if e.enableLogs && e.loggerProvider != nil {
-		e.generateLogs(spanCtx, tmpl.Logs, span)
+		e.generateLogs(spanCtx, tmpl.Logs)
 	}
 
 	// Check for error simulation
@@ -226,8 +222,8 @@ func (e *Engine) generateSpan(
 }
 
 // generateLogs generates log entries for a span.
-func (*Engine) generateLogs(ctx context.Context, logs []scenario.LogTemplate, _ trace.Span) {
-	logger := global.GetLoggerProvider().Logger("otlp-sim")
+func (e *Engine) generateLogs(ctx context.Context, logs []scenario.LogTemplate) {
+	logger := e.loggerProvider.Logger("otlp-sim")
 
 	for _, l := range logs {
 		// Build log record

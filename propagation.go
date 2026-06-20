@@ -91,22 +91,31 @@ func buildPropagator(cfg *PropConfig) propagation.TextMapPropagator {
 	return propagation.NewCompositeTextMapPropagator(propagators...)
 }
 
-// InjectHTTP injects trace context and baggage into HTTP headers.
+// InjectHTTP injects propagation fields into HTTP headers using the global text
+// map propagator. Exactly what is carried (trace context, baggage, or both)
+// depends on the propagators configured via OTEL_PROPAGATORS or
+// [BuildPropagator].
 func InjectHTTP(ctx context.Context, headers http.Header) {
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(headers))
 }
 
-// ExtractHTTP extracts trace context and baggage from HTTP headers.
+// ExtractHTTP extracts propagation fields from HTTP headers using the global
+// text map propagator. Exactly what is extracted depends on the propagators
+// configured via OTEL_PROPAGATORS or [BuildPropagator].
 func ExtractHTTP(ctx context.Context, headers http.Header) context.Context {
 	return otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(headers))
 }
 
-// InjectGRPC injects trace context and baggage into gRPC metadata.
+// InjectGRPC injects propagation fields into gRPC metadata using the global
+// text map propagator. Exactly what is carried depends on the propagators
+// configured via OTEL_PROPAGATORS or [BuildPropagator].
 func InjectGRPC(ctx context.Context, md metadata.MD) {
 	otel.GetTextMapPropagator().Inject(ctx, metadataCarrier(md))
 }
 
-// ExtractGRPC extracts trace context and baggage from gRPC metadata.
+// ExtractGRPC extracts propagation fields from gRPC metadata using the global
+// text map propagator. Exactly what is extracted depends on the propagators
+// configured via OTEL_PROPAGATORS or [BuildPropagator].
 func ExtractGRPC(ctx context.Context, md metadata.MD) context.Context {
 	return otel.GetTextMapPropagator().Extract(ctx, metadataCarrier(md))
 }

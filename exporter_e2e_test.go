@@ -334,7 +334,7 @@ func TestExportE2E_HTTP_FlushOnShutdown(t *testing.T) {
 	require.NoError(t, err)
 
 	const n = 5
-	for i := 0; i < n; i++ {
+	for range n {
 		_, span := tp.Tracer("e2e").Start(context.Background(), "s")
 		span.End()
 	}

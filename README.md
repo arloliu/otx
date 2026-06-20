@@ -18,7 +18,7 @@ The `otx` package provides a unified, configuration-driven wrapper around OpenTe
 - **🎯 Span Kind Helpers** - `StartServer`, `StartClient`, `StartProducer`, `StartConsumer` for accurate service maps
 - **⚡ Baggage Utilities** - Simple API for cross-service context propagation
 - **🛡️ Graceful Shutdown** - Proper lifecycle management with flush-on-shutdown
-- **🧪 Testing Support** - Noop providers and test utilities for unit testing
+- **🧪 Testing Support** - Disabled config returns `ErrDisabled`; callers no-op cleanly without provider setup
 - **📊 Backend Agnostic** - Works with Jaeger, Zipkin, Datadog, Grafana Tempo, Honeycomb, and more
 
 ## Documentation
@@ -37,7 +37,7 @@ The `otx` package provides a unified, configuration-driven wrapper around OpenTe
 
 ## Core Concepts
 
--   **Zero-Config Defaults**: Works out of the box with sensible defaults (noop if disabled).
+-   **Zero-Config Defaults**: Works out of the box with sensible defaults. When disabled, constructors return `ErrDisabled` (or signal-specific errors such as `ErrTracesDisabled`); guard with `errors.Is(err, otx.ErrDisabled)` and skip provider setup. If `InitTracing` is never called, `otx.Start*` helpers return the span already in `ctx` (a non-recording span when none is present).
 -   **Service Identity**: Uses the configured `ServiceName` to identify the source of traces.
 -   **Unified Transport**: Supports OTLP (gRPC/HTTP) for exporting traces to backends like Jaeger, Datadog, or Grafana Tempo.
 -   **Context Propagation**: Automatically handles W3C TraceContext and Baggage across process boundaries.
@@ -61,8 +61,7 @@ telemetry:
   enabled: true
   serviceName: "my-service"  # OTEL_SERVICE_NAME
   environment: "production"  # OTEL_DEPLOYMENT_ENVIRONMENT
-  exporter:
-    type: "otlp"  # OTEL_TRACES_EXPORTER
+  otlp:
     endpoint: "localhost:4318"  # OTEL_EXPORTER_OTLP_ENDPOINT
     protocol: "http/protobuf"  # OTEL_EXPORTER_OTLP_PROTOCOL
   sampling:
@@ -198,7 +197,9 @@ func (w *Worker) Run() {
 
 ### Middleware
 
-The `otx/middleware` package provides drop-in wrappers for transport instrumentation.
+The `github.com/arloliu/otx/grpc` and `github.com/arloliu/otx/http` packages provide
+drop-in wrappers for transport instrumentation. Use package aliases to avoid collisions
+with the stdlib `grpc` and `http` identifiers.
 
 #### gRPC Middleware
 
@@ -206,14 +207,19 @@ The gRPC middleware wraps `otelgrpc` stats handlers for server and client-side t
 
 **Basic Usage (uses global providers):**
 ```go
+import (
+    "google.golang.org/grpc"
+    otxgrpc "github.com/arloliu/otx/grpc"
+)
+
 // Server - uses global TracerProvider, MeterProvider, and Propagator
 srv := grpc.NewServer(
-    grpc.StatsHandler(middleware.GRPCServerHandler()),
+    grpc.StatsHandler(otxgrpc.ServerHandler()),
 )
 
 // Client - uses global providers
 conn, err := grpc.NewClient(addr,
-    grpc.WithStatsHandler(middleware.GRPCClientHandler()),
+    grpc.WithStatsHandler(otxgrpc.ClientHandler()),
 )
 ```
 
@@ -221,7 +227,7 @@ conn, err := grpc.NewClient(addr,
 ```go
 // Server with explicit providers
 srv := grpc.NewServer(
-    grpc.StatsHandler(middleware.GRPCServerHandlerWithProviders(
+    grpc.StatsHandler(otxgrpc.ServerHandlerWithProviders(
         tracerProvider,   // trace.TracerProvider
         meterProvider,    // metric.MeterProvider
         propagator,       // propagation.TextMapPropagator
@@ -230,7 +236,7 @@ srv := grpc.NewServer(
 
 // Client with explicit providers
 conn, err := grpc.NewClient(addr,
-    grpc.WithStatsHandler(middleware.GRPCClientHandlerWithProviders(
+    grpc.WithStatsHandler(otxgrpc.ClientHandlerWithProviders(
         tracerProvider,
         meterProvider,
         propagator,
@@ -242,19 +248,24 @@ conn, err := grpc.NewClient(addr,
 
 **Basic Usage (uses global providers):**
 ```go
+import (
+    "net/http"
+    otxhttp "github.com/arloliu/otx/http"
+)
+
 // Server Middleware
-http.Handle("/api", middleware.HTTPMiddleware()(myHandler))
+http.Handle("/api", otxhttp.Middleware()(myHandler))
 
 // Client Transport
 client := &http.Client{
-    Transport: middleware.HTTPTransport(http.DefaultTransport),
+    Transport: otxhttp.Transport(http.DefaultTransport),
 }
 ```
 
 **With Explicit Providers (for testing or multi-tenant scenarios):**
 ```go
 // Server Middleware with explicit providers
-http.Handle("/api", middleware.HTTPMiddlewareWithProviders(
+http.Handle("/api", otxhttp.MiddlewareWithProviders(
     tracerProvider,
     meterProvider,
     propagator,
@@ -262,7 +273,7 @@ http.Handle("/api", middleware.HTTPMiddlewareWithProviders(
 
 // Client Transport with explicit providers
 client := &http.Client{
-    Transport: middleware.HTTPTransportWithProviders(
+    Transport: otxhttp.TransportWithProviders(
         http.DefaultTransport,
         tracerProvider,
         meterProvider,
@@ -324,7 +335,7 @@ func main() {
 4.  **Error Handling**: Use `otx.RecordError(ctx, err)` to ensure the span is marked as failed in the monitoring UI.
 5.  **Mark Success**: Use `otx.SetSuccess(ctx)` at the end of successful operations to explicitly mark the span status.
 6.  **Kind Matters**: Use `StartClient` / `StartServer` / `StartProducer` / `StartConsumer` correctly. This helps backends generate dependency graphs (Service Map).
-7.  **Access Current Span**: Use `otx.Span(ctx)` to get the current span for advanced operations.
+7.  **Access Current Span**: Use `otx.SpanFromContext(ctx)` to get the current span for advanced operations.
 8.  **Always Shutdown Providers**: Call `Shutdown(ctx)` on all providers before application exit to flush pending telemetry.
 
 ### Span Naming Best Practices

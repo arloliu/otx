@@ -1,5 +1,5 @@
-// Package endpoint classifies OTLP endpoint strings and provides the single
-// shared helper used by config validation, exporter.go, and zaplog/core.go.
+// Package endpoint classifies OTLP endpoint strings and provides Classify and
+// IsHTTP helpers used by config validation, exporter.go, and zaplog/core.go.
 //
 // Valid forms:
 //   - bare host:port   (e.g. "localhost:4318", "collector", "[::1]:4318")
@@ -50,8 +50,8 @@ func Classify(raw string) (Kind, error) {
 	}
 
 	// Detect any other "://" pattern and reject it.
-	if idx := strings.Index(raw, "://"); idx >= 0 {
-		scheme := raw[:idx]
+	if before, _, ok := strings.Cut(raw, "://"); ok {
+		scheme := before
 		return KindBare, fmt.Errorf(
 			"invalid endpoint scheme %q: transport is selected by protocol, not the endpoint scheme; "+
 				"use host:port or an http(s):// URL",

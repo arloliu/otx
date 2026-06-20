@@ -29,6 +29,10 @@ func NewPublisher(js jetstream.JetStream, opts ...Option) *Publisher {
 // If tp is nil, the global TracerProvider is used.
 // If prop is nil, the global TextMapPropagator is used (or opts.prop if set).
 //
+// Tracer precedence: on the default tracer name, an otx-configured global
+// tracer takes precedence over an explicit non-nil tp. Pass WithTracerName to
+// force use of the supplied tp under your own instrumentation name.
+//
 // Panics if js is nil.
 func NewPublisherWithProviders(
 	js jetstream.JetStream,
@@ -71,7 +75,7 @@ func (p *Publisher) Publish(
 
 	ctx, span := p.tracer.Start(ctx, spanName,
 		trace.WithSpanKind(trace.SpanKindProducer),
-		trace.WithAttributes(publishAttributes(subject, "", len(data))...),
+		trace.WithAttributes(publishAttributes(subject, len(data))...),
 	)
 	defer span.End()
 
@@ -112,7 +116,7 @@ func (p *Publisher) PublishMsg(
 
 	ctx, span := p.tracer.Start(ctx, spanName,
 		trace.WithSpanKind(trace.SpanKindProducer),
-		trace.WithAttributes(publishAttributes(subject, "", len(msg.Data))...),
+		trace.WithAttributes(publishAttributes(subject, len(msg.Data))...),
 	)
 	defer span.End()
 
@@ -155,7 +159,7 @@ func (p *Publisher) PublishAsync(
 
 	ctx, span := p.tracer.Start(ctx, spanName,
 		trace.WithSpanKind(trace.SpanKindProducer),
-		trace.WithAttributes(publishAttributes(subject, "", len(data))...),
+		trace.WithAttributes(publishAttributes(subject, len(data))...),
 	)
 	// Note: span.End() is deferred here, not after future resolves
 	// This captures the publish initiation, not the ack receipt
@@ -196,7 +200,7 @@ func (p *Publisher) PublishAsyncMsg(
 
 	ctx, span := p.tracer.Start(ctx, spanName,
 		trace.WithSpanKind(trace.SpanKindProducer),
-		trace.WithAttributes(publishAttributes(subject, "", len(msg.Data))...),
+		trace.WithAttributes(publishAttributes(subject, len(msg.Data))...),
 	)
 	defer span.End()
 

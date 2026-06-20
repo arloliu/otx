@@ -13,8 +13,7 @@ echo $OTX_ENABLED  # Should be "true"
 
 Or in YAML:
 ```yaml
-telemetry:
-  enabled: true  # Must be true
+enabled: true  # Must be true
 ```
 
 **Check 2: Exporter endpoint is correct**
@@ -160,14 +159,12 @@ publisher.Publish(ctx, "subject", data)
 **Cause**: Service name not configured when telemetry is enabled
 
 ```yaml
-telemetry:
-  enabled: true
-  serviceName: ""  # ❌ Empty
+enabled: true
+serviceName: ""  # ❌ Empty
 
 # Fix
-telemetry:
-  enabled: true
-  serviceName: "my-service"  # ✅ Required
+enabled: true
+serviceName: "my-service"  # ✅ Required
 ```
 
 ### Issue: `ErrDisabled` returned
@@ -184,6 +181,11 @@ if err != nil {
     log.Fatal(err)
 }
 ```
+
+`NewTracerProvider` also returns `ErrTracesDisabled` when telemetry is
+enabled but the traces signal is explicitly off. `ErrTracesDisabled` wraps
+`ErrDisabled`, so the `errors.Is(err, otx.ErrDisabled)` guard above already
+catches it without any additional check.
 
 ### Issue: Panic on nil handler
 
@@ -245,8 +247,10 @@ sampling:
 ### Issue: Invalid sampler argument
 
 ```
-Error: samplerArg must be between 0 and 1
+validation failed: Key: 'SamplingConfig.SamplerArg' Error:Field validation for 'SamplerArg' failed on the 'lte' tag
 ```
+
+(Exact key path is illustrative; it reflects the struct type and field name.)
 
 **Fix**:
 ```yaml
@@ -257,8 +261,10 @@ sampling:
 ### Issue: Invalid exporter type
 
 ```
-Error: exporter must be one of: otlp, console, stdout, none
+validation failed: Key: 'TracesConfig.Exporter' Error:Field validation for 'Exporter' failed on the 'oneof' tag
 ```
+
+(Exact key path is illustrative. Valid values: `otlp`, `console`, `stdout`, `none`.)
 
 **Fix**:
 ```yaml
@@ -269,8 +275,10 @@ traces:
 ### Issue: Invalid protocol
 
 ```
-Error: protocol must be one of: grpc, http/protobuf, http
+validation failed: Key: 'OTLPConfig.Protocol' Error:Field validation for 'Protocol' failed on the 'oneof' tag
 ```
+
+(Exact key path is illustrative. Valid values: `grpc`, `http/protobuf`, `http`.)
 
 **Fix**:
 ```yaml
