@@ -5,7 +5,7 @@ All notable changes to otx (`github.com/arloliu/otx`) are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v1.1.1 — Unreleased
+## v1.1.1 — 2026-06-21
 
 Patch release: backward-compatible bug fixes, internal robustness/error-handling hardening, code
 simplification, and documentation corrections. No exported symbol was added, removed, or changed, and no
