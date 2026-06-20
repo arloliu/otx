@@ -44,8 +44,8 @@ update-linter:
 update-pkg-cache:
 	@printf "Updating Go package cache...\n"
 	@GOPROXY=$(shell go env GOPROXY | cut -d',' -f1) && \
-	MODULE=$(shell go mod edit -json | grep -o '"ModulePath": "[^"]*"' | cut -d'"' -f4) && \
+	MODULE=$(shell go list -m) && \
 	VERSION=$(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest") && \
 	echo "Updating $$MODULE@$$VERSION on $$GOPROXY" && \
-	curl -s "$$GOPROXY/$$MODULE/@v/$$VERSION.info" > /dev/null && \
+	curl -fsS "$$GOPROXY/$$MODULE/@v/$$VERSION.info" > /dev/null && \
 	echo "Package cache updated successfully."
