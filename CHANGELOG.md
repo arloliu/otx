@@ -5,6 +5,44 @@ All notable changes to otx (`github.com/arloliu/otx`) are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.1.1 — Unreleased
+
+Patch release: backward-compatible bug fixes, internal robustness/error-handling hardening, code
+simplification, and documentation corrections. No exported symbol was added, removed, or changed, and no
+default or on-the-wire behavior changed — the items under **Fixed** correct genuine defects only.
+
+### Fixed
+
+- `zaplog` now emits the one-time plaintext-export diagnostic when an insecure (no `https://`) OTLP log
+  endpoint targets a non-loopback host, matching the SDK trace/metric/log exporters. Previously a remote
+  default-insecure log endpoint shipped logs and any bearer headers in cleartext with no warning.
+- `http.WithTransport(nil)` is now a no-op that leaves the default transport in effect, as its godoc
+  states; it previously overwrote the default with `nil` and silently dropped every transport-level
+  option (pool sizes, timeouts).
+- **otlp-sim CLI:** bare `--insecure` no longer swallows the following argument; batched spans/logs now
+  flush on exit and the export-error summary prints (the engine is now shut down); a non-positive `--rate`
+  returns an error instead of panicking in `time.NewTicker`; explicit CLI flags now take precedence over
+  environment variables (CLI > env > default); the non-functional `OTEL_EXPORTER_OTLP_PROTOCOL` line was
+  removed from `--help` and the working `--scenario-file` flag is now documented.
+
+### Documentation
+
+- Rewrote the README "Middleware" section to use the real `grpc` and `http` packages (the documented
+  `otx/middleware` package never existed).
+- Fixed non-compiling examples across the README and guides (missing imports, stale package aliases,
+  a nonexistent `semconv` constructor), corrected disabled-config and `otlp-sim` scenario YAML that
+  silently parsed to an empty/disabled config, completed the sampler list, and corrected the gRPC
+  span-naming docs, NATS tracer-precedence note, and various godoc comments to match the shipped v1.1.0
+  API and defaults.
+
+### Internal
+
+- Code simplification with no behavioral change: flattened the exporter OTLP option builders, removed a
+  dead branch in the metric-interval normalizer, dropped a dead publish-attribute argument and an unused
+  keepalive in NATS, and trimmed dead code in the `otlp-sim` engine. Extracted the shared insecure-export
+  diagnostic into a new unexported `internal/insecurewarn` package (no new external dependency or exported
+  symbol).
+
 ## v1.1.0 — 2026-06-20
 
 Feature release: zap-native OTLP logging, OTLP endpoint validation, and a new default export protocol.
