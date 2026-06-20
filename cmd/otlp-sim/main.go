@@ -49,28 +49,29 @@ Modes:
   list    List available scenarios
 
 Quick Mode Flags:
-  --endpoint     OTLP endpoint (default: localhost:4317)
-  --http         Use HTTP instead of gRPC
-  --insecure     Skip TLS verification (default: true)
-  --scenario     Scenario name (default: payment)
-  --count        Number of traces to send (default: 10)
-  --logs         Enable log generation
-  --service-name Override service name
+  --endpoint      OTLP endpoint (default: localhost:4317)
+  --http          Use HTTP instead of gRPC
+  --insecure      Skip TLS verification (default: true)
+  --scenario      Scenario name (default: payment)
+  --scenario-file Custom YAML scenario file
+  --count         Number of traces to send (default: 10)
+  --logs          Enable log generation
+  --service-name  Override service name
 
 Continuous Mode Flags:
-  --endpoint     OTLP endpoint (default: localhost:4317)
-  --http         Use HTTP instead of gRPC
-  --insecure     Skip TLS verification (default: true)
-  --scenario     Scenario name (default: payment)
-  --duration     Total simulation time (default: 1m)
-  --rate         Traces per second (default: 1)
-  --jitter       Timing variation percentage (default: 20)
-  --logs         Enable log generation
-  --service-name Override service name
+  --endpoint      OTLP endpoint (default: localhost:4317)
+  --http          Use HTTP instead of gRPC
+  --insecure      Skip TLS verification (default: true)
+  --scenario      Scenario name (default: payment)
+  --scenario-file Custom YAML scenario file
+  --duration      Total simulation time (default: 1m)
+  --rate          Traces per second (default: 1)
+  --jitter        Timing variation percentage (default: 20)
+  --logs          Enable log generation
+  --service-name  Override service name
 
 Environment Variables:
   OTEL_EXPORTER_OTLP_ENDPOINT   OTLP endpoint
-  OTEL_EXPORTER_OTLP_PROTOCOL   grpc or http
   OTEL_EXPORTER_OTLP_INSECURE   Skip TLS verification
   OTEL_SERVICE_NAME             Default service name
 
@@ -82,16 +83,14 @@ Examples:
 
 func runQuickMode(args []string) {
 	cfg := newConfig()
+	cfg.applyEnvOverrides()
+
 	fs := flag.NewFlagSet("quick", flag.ExitOnError)
 	cfg.bindCommonFlags(fs)
 	fs.IntVar(&cfg.Count, "count", cfg.Count, "Number of traces to send")
 
-	if err := fs.Parse(args); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
-		return
-	}
-
-	cfg.applyEnvOverrides()
+	// ExitOnError makes Parse exit the process on error, so it never returns non-nil.
+	_ = fs.Parse(args)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -103,6 +102,8 @@ func runQuickMode(args []string) {
 
 func runContinuousMode(args []string) {
 	cfg := newConfig()
+	cfg.applyEnvOverrides()
+
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	cfg.bindCommonFlags(fs)
 
@@ -110,12 +111,8 @@ func runContinuousMode(args []string) {
 	fs.Float64Var(&cfg.Rate, "rate", cfg.Rate, "Traces per second")
 	fs.IntVar(&cfg.Jitter, "jitter", cfg.Jitter, "Timing variation percentage")
 
-	if err := fs.Parse(args); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
-		return
-	}
-
-	cfg.applyEnvOverrides()
+	// ExitOnError makes Parse exit the process on error, so it never returns non-nil.
+	_ = fs.Parse(args)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -163,6 +160,14 @@ func executeQuick(ctx context.Context, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to create engine: %w", err)
 	}
+	// SIGINT cancels ctx, so use a fresh context to flush batched spans/logs on exit.
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := eng.Shutdown(shutdownCtx); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: shutdown error: %v\n", err)
+		}
+	}()
 
 	fmt.Printf("Sending %d traces to %s (scenario: %s)\n", cfg.Count, cfg.Endpoint, s.Name)
 
@@ -180,8 +185,6 @@ func executeQuick(ctx context.Context, cfg *Config) error {
 		fmt.Printf("Trace %d/%d sent\n", i+1, cfg.Count)
 	}
 
-	// Allow time for export
-	time.Sleep(500 * time.Millisecond)
 	fmt.Println("Done!")
 
 	return nil
@@ -205,10 +208,21 @@ func executeContinuous(ctx context.Context, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to create engine: %w", err)
 	}
+	// SIGINT cancels ctx, so use a fresh context to flush batched spans/logs on exit.
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := eng.Shutdown(shutdownCtx); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: shutdown error: %v\n", err)
+		}
+	}()
 
 	fmt.Printf("Running %s scenario for %v at %.1f traces/sec\n", s.Name, cfg.Duration, cfg.Rate)
 
 	interval := time.Duration(float64(time.Second) / cfg.Rate)
+	if interval <= 0 {
+		return fmt.Errorf("rate %v yields a non-positive interval", cfg.Rate)
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
