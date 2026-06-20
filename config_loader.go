@@ -30,7 +30,7 @@ func LoadConfig(path string) (*TelemetryConfig, error) {
 	return &cfg, nil
 }
 
-// ParseConfig parsers TelemetryConfig from a byte slice.
+// ParseConfig parses TelemetryConfig from a byte slice.
 // It supports YAML and JSON formats (auto-detected).
 // Environment variables are also parsed and override file values.
 func ParseConfig(data []byte) (*TelemetryConfig, error) {

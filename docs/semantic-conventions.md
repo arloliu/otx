@@ -45,8 +45,8 @@ These conventions are based on analysis of Kubernetes, OpenTelemetry Contrib, gR
 |----------|------------|---------------------|
 | **HTTP Server** | `METHOD /route` | `GET /api/v1/namespaces/{:namespace}/pods/{:name}` (Kubernetes) |
 | **HTTP Client** | `METHOD` or `METHOD /path` | `GET`, `POST /users` (go-kit, otelhttp) |
-| **gRPC Server** | `Recv.package.Service.Method` | `Recv.grpc.testing.TestService.UnaryCall` (gRPC-Go) |
-| **gRPC Client** | `Sent.package.Service.Method` | `Sent.grpc.testing.TestService.FullDuplexCall` (gRPC-Go) |
+| **gRPC Server** | `package.Service/Method` | `grpc.testing.TestService/UnaryCall` (otelgrpc) |
+| **gRPC Client** | `package.Service/Method` | `grpc.testing.TestService/FullDuplexCall` (otelgrpc) |
 | **Database** | `operation table` | `SELECT users`, `findTraceIDs` (Jaeger) |
 | **MongoDB** | `collection.operation` | `users.find`, `orders.insertOne` (OTel Contrib) |
 | **AWS SDK** | `ServiceID.Operation` | `S3.ListBuckets`, `DynamoDB.GetItem` (OTel Contrib) |
@@ -87,24 +87,19 @@ Use the route template, not the actual path:
 
 **Reference**: [RPC Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/rpc/)
 
-Based on gRPC-Go's official instrumentation, use prefixes for directionality:
+OTX (via otelgrpc) names both server and client spans using the non-prefixed
+`package.Service/Method` format:
 
 ```go
 // Standard format: "package.Service/Method"
 spanName := otx.NameRPC("OrderService", "CreateOrder")
 // Result: "OrderService/CreateOrder"
-
-// gRPC-Go style with direction prefixes:
-// Client spans: "Sent.package.Service.Method"
-// Server spans: "Recv.package.Service.Method"
-// Attempt spans: "Attempt.package.Service.Method"
 ```
 
 | Direction | Format | Example |
 |-----------|--------|--------|
-| Server (incoming) | `Recv.package.Service.Method` | `Recv.myapp.UserService.GetUser` |
-| Client (outgoing) | `Sent.package.Service.Method` | `Sent.payment.PaymentService.Charge` |
-| Retry attempt | `Attempt.package.Service.Method` | `Attempt.myapp.UserService.GetUser` |
+| Server (incoming) | `package.Service/Method` | `myapp.UserService/GetUser` |
+| Client (outgoing) | `package.Service/Method` | `payment.PaymentService/Charge` |
 
 ### Database Spans
 
@@ -197,12 +192,17 @@ otx.SetAttributes(ctx,
 
 ```go
 otx.SetAttributes(ctx,
-    semconv.MessagingSystem("nats"),
+    semconv.MessagingSystemKey.String("nats"),
     semconv.MessagingDestinationName("orders.created"),
     semconv.MessagingOperationPublish,
     semconv.MessagingMessageBodySize(1024),
 )
 ```
+
+Note: `go.opentelemetry.io/otel/semconv/v1.24.0` exposes `MessagingSystemKey` (a
+`attribute.Key`) plus typed enum constants (e.g. `MessagingSystemKafka`), but no
+`MessagingSystem(string)` constructor. Use `MessagingSystemKey.String(...)` for
+systems not covered by an enum constant.
 
 ### Custom Attributes
 

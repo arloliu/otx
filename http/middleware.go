@@ -37,7 +37,7 @@ func Handler(handler http.Handler, operation string, opts ...otelhttp.Option) ht
 //
 // Usage:
 //
-//	http.Handle("/api", http.HandlerWithProviders(
+//	http.Handle("/api", otxhttp.HandlerWithProviders(
 //	    myHandler,
 //	    "api.request",
 //	    tracerProvider,
@@ -68,7 +68,7 @@ func HandlerWithProviders(
 //
 // Usage:
 //
-//	http.Handle("/api", http.Middleware()(myHandler))
+//	http.Handle("/api", otxhttp.Middleware()(myHandler))
 func Middleware(opts ...otelhttp.Option) func(http.Handler) http.Handler {
 	mw := otelhttp.NewMiddleware("http.request", withOperationSpanName("http.request", opts)...)
 
@@ -89,7 +89,7 @@ func Middleware(opts ...otelhttp.Option) func(http.Handler) http.Handler {
 //
 // Usage:
 //
-//	http.Handle("/api", http.MiddlewareWithProviders(
+//	http.Handle("/api", otxhttp.MiddlewareWithProviders(
 //	    tracerProvider,
 //	    meterProvider,
 //	    propagator,

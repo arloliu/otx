@@ -1,5 +1,5 @@
-// Package endpoint classifies OTLP endpoint strings and provides the single
-// shared helper used by config validation, exporter.go, and zaplog/core.go.
+// Package endpoint classifies OTLP endpoint strings and provides Classify and
+// IsHTTP helpers used by config validation, exporter.go, and zaplog/core.go.
 //
 // Valid forms:
 //   - bare host:port   (e.g. "localhost:4318", "collector", "[::1]:4318")

@@ -84,8 +84,8 @@ consumer, _ := js.Consumer(ctx, "ORDERS", "order-processor")
 // Wrap with tracing
 tracedConsumer := otxnats.WrapConsumer(consumer, "ORDERS")
 
-// Fetch messages
-batch, err := tracedConsumer.Fetch(10)
+// Fetch messages (prefer FetchContext over the deprecated Fetch)
+batch, err := tracedConsumer.FetchContext(ctx, 10)
 for msg := range batch.Messages() {
     ctx := msg.Context()  // Contains extracted trace context
     processOrder(ctx, msg.Data())
@@ -95,21 +95,24 @@ for msg := range batch.Messages() {
 
 ### Fetch Methods
 
+Prefer the `*Context` variants; the non-context forms (`Fetch`, `FetchBytes`,
+`FetchNoWait`, `Next`, `Messages`) are deprecated by the underlying JetStream API.
+
 ```go
-// Fetch batch
-batch, err := tracedConsumer.Fetch(10)
+// Fetch batch with context (preferred)
+batch, err := tracedConsumer.FetchContext(ctx, 10)
 
-// Fetch by bytes
-batch, err := tracedConsumer.FetchBytes(1024 * 1024)  // 1MB
+// Fetch by bytes with context (preferred)
+batch, err := tracedConsumer.FetchBytesContext(ctx, 1024*1024)  // 1MB
 
-// Fetch without waiting
-batch, err := tracedConsumer.FetchNoWait(10)
+// Fetch without waiting with context (preferred)
+batch, err := tracedConsumer.FetchNoWaitContext(ctx, 10)
 
-// Fetch single message
-msg, err := tracedConsumer.Next()
+// Fetch single message with context (preferred)
+msg, err := tracedConsumer.NextContext(ctx)
 
-// Continuous consumption
-msgs, err := tracedConsumer.Messages()
+// Continuous consumption with context (preferred)
+msgs, err := tracedConsumer.MessagesWithContext(ctx)
 for {
     msg, err := msgs.Next()
     if err != nil {
@@ -118,6 +121,7 @@ for {
     processOrder(msg.Context(), msg.Data())
     msg.Ack()
 }
+msgs.Stop()
 ```
 
 ### Consumer Options
@@ -125,10 +129,14 @@ for {
 ```go
 tracedConsumer := otxnats.WrapConsumer(consumer, "ORDERS",
     otxnats.WithTracerName("order-processor"),
-    otxnats.WithProcessSpans(true),  // Enable per-message process spans
-    otxnats.WithStream("ORDERS"),    // Override stream name
+    otxnats.WithPropagator(customPropagator),
 )
 ```
+
+The receive-span stream name comes from the positional `stream` argument to `WrapConsumer`.
+`WithStream` and `WithProcessSpans` affect only process spans created via
+`MessageHandlerWithTracing` or `TracedMsg.StartProcessSpan`; they are inert on
+`TracedConsumer`.
 
 ## Message Handler
 
@@ -233,8 +241,9 @@ OTX automatically sets messaging semantic convention attributes:
 | `messaging.system` | Messaging system | `"nats"` |
 | `messaging.operation.name` | Operation name | `"publish"`, `"receive"`, `"process"` |
 | `messaging.operation.type` | Operation type | `"send"`, `"receive"`, `"process"` |
-| `messaging.destination.name` | Subject/stream | `"orders.created"` |
-| `messaging.message.id` | Message ID | `"msg-123"` |
+| `messaging.destination.name` | Subject | `"orders.created"` |
+| `nats.stream` | JetStream stream (receive/process spans) | `"ORDERS"` |
+| `messaging.message.id` | JetStream publish ack sequence (publish spans only) | `"42"` |
 | `messaging.message.body.size` | Payload size | `1024` |
 | `messaging.consumer.group.name` | Consumer name | `"order-processor"` |
 

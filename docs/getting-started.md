@@ -37,10 +37,11 @@ func main() {
     if err != nil && !errors.Is(err, otx.ErrDisabled) {
         log.Fatal(err)
     }
-    defer tp.Shutdown(ctx)
-
-    // Initialize global tracer
-    otx.InitTracing(tp.Tracer("my-service"), otx.DefaultNamer{})
+    if tp != nil {
+        defer tp.Shutdown(ctx)
+        // Initialize global tracer
+        otx.InitTracing(tp.Tracer("my-service"), otx.DefaultNamer{})
+    }
 
     // Your application code
     runApp(ctx)
@@ -50,6 +51,14 @@ func main() {
 ### 2. Create Your First Span
 
 ```go
+import (
+    "context"
+
+    "go.opentelemetry.io/otel/attribute"
+
+    "github.com/arloliu/otx"
+)
+
 func runApp(ctx context.Context) {
     ctx, span := otx.Start(ctx, "runApp")
     defer span.End()

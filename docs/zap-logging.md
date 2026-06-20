@@ -84,9 +84,10 @@ add grpc-go to your binary's data path. Endpoint forms and scheme precedence are
 unchanged for both protocols (see Endpoint mapping below). For gRPC, header
 values must be printable ASCII without leading or trailing whitespace; values
 that violate this are rejected at construction with an actionable zapwire error.
-Reserved gRPC metadata key prefixes (`grpc-`, `-bin`, `content-type`, `te`) are
-also rejected at construction. Headers that work on HTTP may therefore fail on
-gRPC if they contain non-ASCII or whitespace-padded values.
+Reserved gRPC metadata keys — the `grpc-` and `:` prefixes, the `-bin` suffix,
+and the exact keys `content-type` and `te` — are also rejected at construction.
+Headers that work on HTTP may therefore fail on gRPC if they contain non-ASCII
+or whitespace-padded values.
 
 ### Endpoint mapping
 
@@ -101,8 +102,8 @@ needs:
 - an endpoint already carrying a scheme passes through unchanged
 
 **HTTP/protobuf path semantics:** zapwire appends `/v1/logs` when the path is
-empty; custom paths (e.g. `http://collector:4318/custom/path`) are passed
-through unchanged.
+empty or a lone `/`; any other (custom) path (e.g. `http://collector:4318/custom/path`)
+is passed through unchanged.
 
 **gRPC path semantics:** gRPC always posts to the fixed OTel method path
 (`/opentelemetry.proto.collector.logs.v1.LogsService/Export`). Endpoint paths,
