@@ -30,7 +30,7 @@ func LoadConfig(path string) (*TelemetryConfig, error) {
 	return &cfg, nil
 }
 
-// ParseConfig parsers TelemetryConfig from a byte slice.
+// ParseConfig parses TelemetryConfig from a byte slice.
 // It supports YAML and JSON formats (auto-detected).
 // Environment variables are also parsed and override file values.
 func ParseConfig(data []byte) (*TelemetryConfig, error) {
@@ -100,17 +100,17 @@ func parseMapEnv(value string) (map[string]string, error) {
 		return out, nil
 	}
 
-	for _, item := range strings.Split(value, ",") {
+	for item := range strings.SplitSeq(value, ",") {
 		item = strings.TrimSpace(item)
 		if item == "" {
 			continue
 		}
 
 		var key, val string
-		if i := strings.IndexByte(item, '='); i >= 0 {
-			key, val = item[:i], item[i+1:]
-		} else if i := strings.IndexByte(item, ':'); i >= 0 {
-			key, val = item[:i], item[i+1:]
+		if before, after, ok := strings.Cut(item, "="); ok {
+			key, val = before, after
+		} else if before, after, ok := strings.Cut(item, ":"); ok {
+			key, val = before, after
 		} else {
 			return nil, fmt.Errorf("invalid map item %q: want key=value", item)
 		}

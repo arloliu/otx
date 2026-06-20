@@ -302,7 +302,8 @@ when implementing).
 
 otx pins `github.com/arloliu/zapwire/otlp v0.2.0` (released 2026-06-13; adds
 `otlp.NewGRPCCore` for the hand-rolled OTLP/gRPC client). No `replace` directive is
-committed.
+committed. (Subsequently bumped to `zapwire/otlp v0.5.0` by v1.1.0; see CHANGELOG.md and
+go.mod for the authoritative current pin.)
 
 ## 7. Review pass-1 resolutions
 
@@ -328,4 +329,4 @@ committed.
 |---|---|
 | **P1** zaplog was HTTP-only; gRPC protocol was rejected with a pinned error | §3.2 rule 2 rewritten: grpc protocol routes to `otlp.NewGRPCCore` (zapwire's hand-rolled OTLP/gRPC client, zero grpc-go in the data plane); pinned-error clause removed; default endpoints now per-protocol (4318 HTTP, 4317 gRPC). |
 | **P1** Test matrix had grpc rejection row | Updated to grpc routing + e2e (real grpc-go capture server) + construction rows. |
-| **dep** zapwire/otlp pinned at v0.1.0 | Bumped to `otlp/v0.2.0` (adds `NewGRPCCore`). |
+| **dep** zapwire/otlp pinned at v0.1.0 | Bumped to `otlp/v0.2.0` (adds `NewGRPCCore`). (Subsequently bumped to `zapwire/otlp v0.5.0` by v1.1.0; see CHANGELOG.md and go.mod for the authoritative current pin.) |

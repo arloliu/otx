@@ -32,6 +32,7 @@ import (
 
 	"github.com/arloliu/otx"
 	"github.com/arloliu/otx/internal/endpoint"
+	"github.com/arloliu/otx/internal/insecurewarn"
 	"github.com/arloliu/zapwire/otlp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
@@ -108,7 +109,15 @@ func NewCore(
 	protocol := effectiveProtocol(cfg, base)
 
 	defaultPort := defaultPortFor(protocol)
-	resolvedEndpoint, err := buildEndpoint(effectiveEndpoint(cfg, base, protocol), base.IsInsecure(), defaultPort)
+	effEndpoint := effectiveEndpoint(cfg, base, protocol)
+
+	// Mirror the SDK exporter hardening (exporter.go): warn once when logs would
+	// ship plaintext to a non-loopback host. base.IsInsecure() defaults TRUE and
+	// buildEndpoint prefixes http:// for insecure bare endpoints, so a remote
+	// default-insecure endpoint with bearer headers would otherwise leak silently.
+	insecurewarn.Warn(effEndpoint, base.IsInsecure())
+
+	resolvedEndpoint, err := buildEndpoint(effEndpoint, base.IsInsecure(), defaultPort)
 	if err != nil {
 		return nil, nil, err
 	}

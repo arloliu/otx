@@ -52,7 +52,7 @@ func newConfig() *Config {
 func (c *Config) bindCommonFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.Endpoint, "endpoint", c.Endpoint, "OTLP endpoint")
 	fs.BoolVar(&c.UseHTTP, "http", c.UseHTTP, "Use HTTP instead of gRPC")
-	fs.Func("insecure", "Skip TLS verification (default: true)", func(s string) error {
+	fs.BoolFunc("insecure", "Skip TLS verification (default: true)", func(s string) error {
 		val := s == "true" || s == "1"
 		c.Insecure = &val
 

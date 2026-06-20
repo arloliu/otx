@@ -5,45 +5,44 @@ OTX supports configuration via YAML files and environment variables. Environment
 ## Configuration Structure
 
 ```yaml
-telemetry:
+enabled: true
+serviceName: "my-service"
+version: "1.0.0"
+environment: "production"
+resourceAttributes:
+  team: "platform"
+  region: "us-east-1"
+
+otlp:
+  endpoint: "localhost:4318"
+  protocol: "http/protobuf"
+  insecure: true
+  timeout: 10s
+  compression: "gzip"
+  headers:
+    Authorization: "Bearer token"
+
+traces:
   enabled: true
-  serviceName: "my-service"
-  version: "1.0.0"
-  environment: "production"
-  resourceAttributes:
-    team: "platform"
-    region: "us-east-1"
+  exporter: "otlp"
+  endpoint: ""  # Override otlp.endpoint for traces only
+  sampling:
+    sampler: "parentbased_traceidratio"
+    samplerArg: 0.1
 
-  otlp:
-    endpoint: "localhost:4318"
-    protocol: "http/protobuf"
-    insecure: true
-    timeout: 10s
-    compression: "gzip"
-    headers:
-      Authorization: "Bearer token"
+logs:
+  enabled: false
+  exporter: "otlp"
+  protocol: "http/protobuf"  # per-signal override; OTEL_EXPORTER_OTLP_LOGS_PROTOCOL
+  minLevel: "warn"           # otx/zaplog OTLP core min level (default: info)
 
-  traces:
-    enabled: true
-    exporter: "otlp"
-    endpoint: ""  # Override otlp.endpoint for traces only
-    sampling:
-      sampler: "parentbased_traceidratio"
-      samplerArg: 0.1
+metrics:
+  enabled: false
+  exporter: "otlp"
+  interval: 60s
 
-  logs:
-    enabled: false
-    exporter: "otlp"
-    protocol: "http/protobuf"  # per-signal override; OTEL_EXPORTER_OTLP_LOGS_PROTOCOL
-    minLevel: "warn"           # otx/zaplog OTLP core min level (default: info)
-
-  metrics:
-    enabled: false
-    exporter: "otlp"
-    interval: 60s
-
-  propagation:
-    propagators: "tracecontext,baggage"
+propagation:
+  propagators: "tracecontext,baggage"
 ```
 
 ## Environment Variables
@@ -78,6 +77,7 @@ export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=metrics-collector:4318
 | `always_off` | Disable tracing entirely |
 | `traceidratio` | Production with fixed sample rate |
 | `parentbased_always_on` | Honor parent decisions, sample roots |
+| `parentbased_always_off` | Honor parent decisions, never sample roots |
 | `parentbased_traceidratio` | Production with parent-based sampling |
 
 ### Recommended Production Setup
@@ -120,7 +120,7 @@ wins over the `insecure` flag. `https://host:4318` is always TLS regardless of
 OTX validates configuration at load time:
 
 - `serviceName`: Required when enabled
-- `samplerArg`: Must be between 0.0 and 1.0
+- `samplerArg`: Must be between 0.0 and 1.0 (only meaningful for `traceidratio` and `parentbased_traceidratio`; ignored by other samplers)
 - `protocol`: Must be `grpc`, `http/protobuf`, or `http`
 - `logs.minLevel`: Must be a zap level (`debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal`)
 - `exporter`: Must be `otlp`, `console`, `stdout`, or `none`

@@ -49,20 +49,21 @@
 //	otx:
 //	  enabled: true
 //	  serviceName: "my-service"  # OTEL_SERVICE_NAME
-//	  sampling:
-//	    sampler: "parentbased_traceidratio"  # OTEL_TRACES_SAMPLER
-//	    samplerArg: 0.1  # OTEL_TRACES_SAMPLER_ARG
-//	  exporter:
-//	    type: "otlp"  # OTEL_TRACES_EXPORTER
-//	    endpoint: "otel-collector:4317"  # OTEL_EXPORTER_OTLP_ENDPOINT
+//	  otlp:
+//	    endpoint: "otel-collector:4318"  # OTEL_EXPORTER_OTLP_ENDPOINT
+//	  traces:
+//	    sampling:
+//	      sampler: "parentbased_traceidratio"  # OTEL_TRACES_SAMPLER
+//	      samplerArg: 0.1                       # OTEL_TRACES_SAMPLER_ARG
 //	  propagation:
 //	    propagators: "tracecontext,baggage"  # OTEL_PROPAGATORS
 //
 // # Span Naming
 //
 // The [SpanNamer] interface controls how operation names become span names.
-// [DefaultNamer] returns operation unchanged, adhering to OTel semantic conventions.
-// Use helpers like [NameHTTP], [NameRPC], etc. to construct standard names.
+// [DefaultNamer] passes the operation name through unchanged.
+// For structured, signal-specific names use helpers such as [NameHTTP], [NameRPC],
+// [NameMessaging], and [NameDB].
 //
 // # Baggage
 //

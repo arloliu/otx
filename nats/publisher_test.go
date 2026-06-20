@@ -43,7 +43,7 @@ func (p *testPublisher) publish(
 
 	ctx, span := p.tracer.Start(ctx, spanName,
 		oteltrace.WithSpanKind(oteltrace.SpanKindProducer),
-		oteltrace.WithAttributes(publishAttributes(subject, "", len(data))...),
+		oteltrace.WithAttributes(publishAttributes(subject, len(data))...),
 	)
 	defer span.End()
 
@@ -75,7 +75,7 @@ func (p *testPublisher) publishMsg(ctx context.Context, msg *nats.Msg) (*jetstre
 
 	ctx, span := p.tracer.Start(ctx, spanName,
 		oteltrace.WithSpanKind(oteltrace.SpanKindProducer),
-		oteltrace.WithAttributes(publishAttributes(subject, "", len(msg.Data))...),
+		oteltrace.WithAttributes(publishAttributes(subject, len(msg.Data))...),
 	)
 	defer span.End()
 
@@ -107,7 +107,7 @@ func (p *testPublisher) publishAsync(subject string, data []byte) (jetstream.Pub
 
 	ctx, span := p.tracer.Start(ctx, spanName,
 		oteltrace.WithSpanKind(oteltrace.SpanKindProducer),
-		oteltrace.WithAttributes(publishAttributes(subject, "", len(data))...),
+		oteltrace.WithAttributes(publishAttributes(subject, len(data))...),
 	)
 	defer span.End()
 
@@ -141,7 +141,7 @@ func (p *testPublisher) publishAsyncMsg(msg *nats.Msg) (jetstream.PubAckFuture, 
 
 	ctx, span := p.tracer.Start(ctx, spanName,
 		oteltrace.WithSpanKind(oteltrace.SpanKindProducer),
-		oteltrace.WithAttributes(publishAttributes(subject, "", len(msg.Data))...),
+		oteltrace.WithAttributes(publishAttributes(subject, len(msg.Data))...),
 	)
 	defer span.End()
 

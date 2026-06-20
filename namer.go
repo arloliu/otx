@@ -6,8 +6,9 @@ type SpanNamer interface {
 }
 
 // DefaultNamer returns operation names unchanged.
-// This complies with OpenTelemetry semantic conventions which recommend
-// using the raw operation name without service prefixes.
+// This is a pass-through implementation; it does not apply any
+// semantic-convention structuring. For structured, signal-specific span
+// names use [NameHTTP], [NameRPC], [NameMessaging], or [NameDB] instead.
 type DefaultNamer struct{}
 
 // Name returns the operation name as is.

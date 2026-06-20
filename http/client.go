@@ -117,6 +117,9 @@ func WithIdleConnTimeout(d time.Duration) ClientOption {
 //   - rt: the base RoundTripper to wrap; nil leaves the default in effect.
 func WithTransport(rt http.RoundTripper) ClientOption {
 	return func(c *clientConfig) {
+		if rt == nil {
+			return
+		}
 		c.baseTransport = rt
 	}
 }

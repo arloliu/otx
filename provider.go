@@ -46,8 +46,9 @@ var ErrTracesDisabled = fmt.Errorf("otx: traces export is disabled: %w", ErrDisa
 // otel.SetTracerProvider and otel.SetTextMapPropagator, replacing any previously
 // installed global tracer provider and propagator. The global propagator is
 // installed only by this constructor; services that export metrics or logs but
-// not traces should call otel.SetTextMapPropagator(otx.BuildPropagator(cfg)) to
-// retain context propagation.
+// not traces should call
+// otel.SetTextMapPropagator(otx.BuildPropagator(cfg.Propagation)) to retain
+// context propagation.
 func NewTracerProvider(ctx context.Context, cfg *TelemetryConfig) (*sdktrace.TracerProvider, error) {
 	if !cfg.IsEnabled() {
 		return nil, ErrDisabled
@@ -99,7 +100,9 @@ func NewTracerProvider(ctx context.Context, cfg *TelemetryConfig) (*sdktrace.Tra
 // ============================================================================
 
 // NewLoggerProvider initializes the OpenTelemetry LoggerProvider.
-// Returns ErrLogsDisabled if logs export is not enabled in config.
+// Returns ErrDisabled if telemetry is not enabled, or ErrLogsDisabled if
+// telemetry is enabled but the logs signal is off. These errors are distinct
+// errors.Is targets: ErrLogsDisabled does not wrap ErrDisabled.
 // Use this with shared/logging's WithLoggerProvider integration.
 //
 // Side effects: on success this mutates the OTel log global — it calls
@@ -150,7 +153,9 @@ func NewLoggerProvider(ctx context.Context, cfg *TelemetryConfig) (*sdklog.Logge
 // ============================================================================
 
 // NewMeterProvider initializes the OpenTelemetry MeterProvider.
-// Returns ErrMetricsDisabled if metrics export is not enabled in config.
+// Returns ErrDisabled if telemetry is not enabled, or ErrMetricsDisabled if
+// telemetry is enabled but the metrics signal is off. These errors are distinct
+// errors.Is targets: ErrMetricsDisabled does not wrap ErrDisabled.
 //
 // Side effects: on success this mutates the OTel global — it calls
 // otel.SetMeterProvider, replacing any previously installed global meter
@@ -253,12 +258,8 @@ func normalizeMetricInterval(value time.Duration, defaultValue time.Duration) ti
 		return defaultValue
 	}
 	if value < time.Millisecond {
-		ms := int64(value / time.Nanosecond)
-		if ms > 0 {
-			return time.Duration(ms) * time.Millisecond
-		}
-
-		return defaultValue
+		//nolint:durationcheck // required to interpret numeric env values as milliseconds
+		return value * time.Millisecond
 	}
 
 	return value

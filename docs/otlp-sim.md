@@ -105,19 +105,19 @@ otlp-sim list
 
 | Scenario | Description | Services | Spans |
 |----------|-------------|----------|-------|
-| `payment` | Online payment system flow | 6 | 8 |
-| `edge-iot` | Edge device management | 4 | 5 |
-| `ecommerce` | E-commerce order flow | 5 | 7 |
+| `payment` | Online payment system flow | 6 | 7 |
+| `edge-iot` | Edge device management | 4 | 6 |
+| `ecommerce` | E-commerce order flow | 4 | 7 |
 | `health-check` | Simple connectivity test | 1 | 1 |
 
 ### payment
-Simulates an online payment flow: API Gateway → Payment Service → Fraud Detection → Payment Processor → Notification. Includes gRPC, HTTP, and async messaging spans.
+Simulates an online payment flow: payment-gateway → payment-service → fraud-detection → ml-service → payment-processor → notification-service. Includes gRPC, HTTP, and async messaging spans.
 
 ### edge-iot
-Simulates edge device telemetry: MQTT broker → gRPC processing → Redis caching → TimescaleDB storage. High-volume, low-latency patterns.
+Simulates edge device telemetry: device-gateway → device-registry → telemetry-processor → rule-engine. High-volume, low-latency patterns with Redis and TimescaleDB.
 
 ### ecommerce
-Simulates order creation: Order Service → Inventory Check → Pricing Service → Event Bus. Includes database and messaging spans.
+Simulates order creation: api-gateway → order-service → inventory-service/pricing-service. Includes database and messaging spans.
 
 ### health-check
 Single HTTP request span for verifying OTLP connectivity. Minimal overhead for testing collector setup.
@@ -132,29 +132,29 @@ description: Custom API flow
 
 services:
   - name: api-gateway
-    spans:
-      - name: HTTP GET /api/v1/users
-        kind: server
-        duration: 50ms
-        attributes:
-          http.method: GET
-          http.route: /api/v1/users
-          http.status_code: 200
-        logs:
-          - level: info
-            message: "Request received"
-            attributes:
-              user.id: "{{.RequestID}}"
-
   - name: user-service
-    spans:
-      - name: SELECT users
-        kind: client
-        duration: 15ms
-        attributes:
-          db.system: postgresql
-          db.operation: SELECT
-          db.sql.table: users
+
+rootSpan:
+  name: GET /api/v1/users
+  service: api-gateway
+  kind: SERVER
+  duration: 50ms
+  attributes:
+    http.request.method: GET
+    http.route: /api/v1/users
+    http.response.status_code: "200"
+  logs:
+    - level: INFO
+      message: "Request received"
+  children:
+    - name: SELECT users
+      service: user-service
+      kind: CLIENT
+      duration: 15ms
+      attributes:
+        db.system: postgresql
+        db.namespace: users
+        db.query.text: "SELECT * FROM users WHERE id = ?"
 ```
 
 **Load custom scenario:**
@@ -168,20 +168,30 @@ otlp-sim quick --scenario-file ./my-scenario.yaml --count 10
 name: string              # Required: scenario name
 description: string       # Optional: description
 
-services:
+services:                 # Flat list of participating services
   - name: string          # Required: service name
-    spans:
-      - name: string      # Required: span name
-        kind: string      # server|client|producer|consumer|internal
-        duration: duration  # e.g., 50ms, 1s
-        error: float64    # Error probability 0.0-1.0
-        attributes:       # OpenTelemetry attributes
-          key: value
-        logs:             # Optional log entries
-          - level: string   # trace|debug|info|warn|error|fatal
-            message: string
-            attributes:
-              key: value
+    attributes:           # Optional: service-level attributes
+      key: value
+
+rootSpan:                 # Single root span; children form the trace tree
+  name: string            # Required: span name
+  service: string         # Required: service name (must appear in services)
+  kind: string            # SERVER|CLIENT|PRODUCER|CONSUMER|INTERNAL
+  duration: duration      # e.g., 50ms, 1s
+  errorRate: float64      # Error probability 0.0-1.0
+  errorStatus: string     # Status message when error is triggered
+  attributes:             # OpenTelemetry attributes
+    key: value
+  logs:                   # Optional log entries
+    - level: string       # DEBUG|INFO|WARN|ERROR (case-sensitive; unrecognized falls back to INFO)
+      message: string
+      attributes:
+        key: value
+  children:               # Nested child spans (recursive SpanTemplate)
+    - name: string
+      service: string
+      kind: string        # SERVER|CLIENT|PRODUCER|CONSUMER|INTERNAL
+      duration: duration
 ```
 
 ## Environment Variables
@@ -194,7 +204,9 @@ The CLI respects standard OpenTelemetry environment variables:
 | `OTEL_EXPORTER_OTLP_INSECURE` | Skip TLS (`true`/`false`) | `--insecure` |
 | `OTEL_SERVICE_NAME` | Default service name | `--service-name` |
 
-**Precedence:** CLI flags > Environment variables > Defaults
+**Precedence:** Environment variables > CLI flags > Defaults
+
+**Note:** The export protocol (gRPC vs HTTP/protobuf) is selected only via the `--http` flag, not via an environment variable.
 
 **Example:**
 ```bash

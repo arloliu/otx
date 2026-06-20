@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -12,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/arloliu/otx/internal/endpoint"
-	"go.opentelemetry.io/otel"
+	"github.com/arloliu/otx/internal/insecurewarn"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -91,15 +90,13 @@ var (
 // https:// scheme forces TLS regardless of the Insecure flag, so URL endpoints
 // never warn. Loopback endpoints (localhost, 127.0.0.0/8, ::1) are the safe
 // default and never warn. Each distinct endpoint warns at most once.
+//
+// Classification and the diagnostic message are shared with the zaplog OTLP
+// core via internal/insecurewarn; this function keeps a local dedup set so the
+// trace/metric/log call sites stay byte-identical and the existing exporter
+// tests can reset it in isolation.
 func warnInsecureRemote(params exporterParams) {
-	if !params.Insecure {
-		return
-	}
-	// https:// always forces TLS, so it is never a plaintext leak.
-	if k, err := endpoint.Classify(params.Endpoint); err == nil && k == endpoint.KindHTTPS {
-		return
-	}
-	if isLoopbackEndpoint(params.Endpoint) {
+	if !insecurewarn.ShouldWarn(params.Endpoint, params.Insecure) {
 		return
 	}
 
@@ -113,48 +110,7 @@ func warnInsecureRemote(params exporterParams) {
 		return
 	}
 
-	otel.Handle(fmt.Errorf(
-		"otx: OTLP exporter is configured insecure (plaintext) for non-loopback host %q; "+
-			"telemetry and any credential-bearing headers are sent without TLS. Set Insecure=false "+
-			"or use an https:// endpoint for remote collectors",
-		params.Endpoint,
-	))
-}
-
-// isLoopbackEndpoint reports whether the endpoint's host resolves to a loopback
-// address (localhost, 127.0.0.0/8, ::1). An empty endpoint is treated as
-// loopback because the protocol default is always localhost.
-func isLoopbackEndpoint(raw string) bool {
-	if raw == "" {
-		return true
-	}
-
-	host := raw
-	if k, err := endpoint.Classify(raw); err == nil && (k == endpoint.KindHTTP || k == endpoint.KindHTTPS) {
-		// Strip the scheme then fall through to host:port handling below.
-		if idx := strings.Index(host, "://"); idx >= 0 {
-			host = host[idx+len("://"):]
-		}
-	}
-
-	// Strip a trailing path on URL forms (e.g. host:port/v1/traces).
-	if idx := strings.IndexByte(host, '/'); idx >= 0 {
-		host = host[:idx]
-	}
-
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
-
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-
-	return false
+	insecurewarn.Emit(params.Endpoint)
 }
 
 // defaultEndpointFor returns the OTel-spec default OTLP endpoint for the given
@@ -462,6 +418,7 @@ func normalizeDuration(value time.Duration) time.Duration {
 	return value
 }
 
+//nolint:dupl // intentionally mirrors buildGRPCOptions to keep option ordering byte-identical across transports
 func buildHTTPOptions[T any](
 	params exporterParams,
 	withEndpoint func(string) T,
@@ -500,6 +457,7 @@ func buildHTTPOptions[T any](
 	return opts
 }
 
+//nolint:dupl // intentionally mirrors buildHTTPOptions to keep option ordering byte-identical across transports
 func buildGRPCOptions[T any](
 	params exporterParams,
 	withEndpoint func(string) T,
@@ -516,30 +474,20 @@ func buildGRPCOptions[T any](
 	// plaintext. WithInsecure MUST NOT be appended for URL endpoints or it would
 	// override the scheme (trace/metric: Insecure = scheme != "https";
 	// log: insecureFromScheme via setting[bool]).
+	var opts []T
 	isURL := endpoint.IsHTTP(params.Endpoint)
 	if isURL {
-		opts := []T{withEndpointURL(params.Endpoint)}
-		if len(params.Headers) > 0 {
-			opts = append(opts, withHeaders(params.Headers))
-		}
-		if params.Timeout > 0 {
-			opts = append(opts, withTimeout(params.Timeout))
-		}
-		if params.Compression == "gzip" {
-			opts = append(opts, withCompression())
-		}
-
-		return opts
+		opts = append(opts, withEndpointURL(params.Endpoint))
+	} else {
+		opts = append(opts, withEndpoint(params.Endpoint))
 	}
-
-	opts := []T{withEndpoint(params.Endpoint)}
 	if len(params.Headers) > 0 {
 		opts = append(opts, withHeaders(params.Headers))
 	}
 	if params.Timeout > 0 {
 		opts = append(opts, withTimeout(params.Timeout))
 	}
-	if params.Insecure {
+	if !isURL && params.Insecure {
 		opts = append(opts, withInsecure())
 	}
 	if params.Compression == "gzip" {

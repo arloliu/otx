@@ -15,7 +15,7 @@ Provide seamless OpenTelemetry instrumentation for NATS JetStream publish and co
 
 ---
 
-#### [NEW] [carrier.go](file:///home/arlo/projects/lib-go/otx/nats/carrier.go)
+#### [NEW] [carrier.go](nats/carrier.go)
 
 NATS header carrier for context propagation.
 
@@ -42,7 +42,7 @@ func ExtractNATS(ctx context.Context, header nats.Header) context.Context
 
 ---
 
-#### [NEW] [attributes.go](file:///home/arlo/projects/lib-go/otx/nats/attributes.go)
+#### [NEW] [attributes.go](nats/attributes.go)
 
 Messaging semantic convention attributes:
 
@@ -59,7 +59,7 @@ Messaging semantic convention attributes:
 
 ---
 
-#### [NEW] [publisher.go](file:///home/arlo/projects/lib-go/otx/nats/publisher.go)
+#### [NEW] [publisher.go](nats/publisher.go)
 
 Publisher wrapper for traced publish operations.
 
@@ -98,7 +98,7 @@ func (p *Publisher) JetStream() jetstream.JetStream
 
 ---
 
-#### [NEW] [consumer.go](file:///home/arlo/projects/lib-go/otx/nats/consumer.go)
+#### [NEW] [consumer.go](nats/consumer.go)
 
 Consumer wrapper with traced consume operations.
 
@@ -142,7 +142,7 @@ func (tc *TracedConsumer) Consumer() jetstream.Consumer
 
 ---
 
-#### [NEW] [message.go](file:///home/arlo/projects/lib-go/otx/nats/message.go)
+#### [NEW] [message.go](nats/message.go)
 
 Wrapped message types exposing extracted trace context.
 
@@ -186,7 +186,7 @@ func (c *TracedMessagesContext) Drain()
 
 ---
 
-#### [NEW] [handler.go](file:///home/arlo/projects/lib-go/otx/nats/handler.go)
+#### [NEW] [handler.go](nats/handler.go)
 
 Message handler wrapper for callback-style consumption.
 
@@ -195,11 +195,11 @@ Message handler wrapper for callback-style consumption.
 // The returned jetstream.MessageHandler receives the original jetstream.Msg,
 // extracts trace context from headers, wraps it as *TracedMsg (with Context()
 // derived from extracted trace), starts a process span, then calls your handler.
-func MessageHandlerWithTracing(handler func(*TracedMsg), stream string,
+func MessageHandlerWithTracing(handler func(*TracedMsg),
     opts ...Option) jetstream.MessageHandler
 
 // MessageHandlerWithTracingProviders with explicit providers.
-func MessageHandlerWithTracingProviders(handler func(*TracedMsg), stream string,
+func MessageHandlerWithTracingProviders(handler func(*TracedMsg),
     tp trace.TracerProvider, prop propagation.TextMapPropagator,
     opts ...Option) jetstream.MessageHandler
 ```
@@ -208,7 +208,7 @@ func MessageHandlerWithTracingProviders(handler func(*TracedMsg), stream string,
 
 ---
 
-#### [NEW] [options.go](file:///home/arlo/projects/lib-go/otx/nats/options.go)
+#### [NEW] [options.go](nats/options.go)
 
 ```go
 type Option func(*options)
@@ -258,7 +258,7 @@ if err := msgs.Error(); err != nil {
 consumer.Consume(natsotx.MessageHandlerWithTracing(func(msg *natsotx.TracedMsg) {
     processOrder(msg.Context(), msg.Data())
     msg.Ack()
-}, "ORDERS"))
+}, natsotx.WithStream("ORDERS")))
 ```
 
 ---
@@ -268,8 +268,8 @@ consumer.Consume(natsotx.MessageHandlerWithTracing(func(msg *natsotx.TracedMsg) 
 ### Automated Tests
 
 ```bash
-cd /home/arlo/projects/lib-go/otx && go test -v ./nats/...
-cd /home/arlo/projects/lib-go/otx && make lint
+make test
+make lint
 ```
 
 Key test cases:

@@ -93,7 +93,7 @@ func TestExtractNATS_ValidHeader(t *testing.T) {
 }
 
 func TestPublishAttributes(t *testing.T) {
-	attrs := publishAttributes("orders.created", "msg-123", 1024)
+	attrs := publishAttributes("orders.created", 1024)
 
 	attrMap := make(map[string]any)
 	for _, attr := range attrs {
@@ -104,7 +104,6 @@ func TestPublishAttributes(t *testing.T) {
 	assert.Equal(t, "publish", attrMap["messaging.operation.name"])
 	assert.Equal(t, "send", attrMap["messaging.operation.type"])
 	assert.Equal(t, "orders.created", attrMap["messaging.destination.name"])
-	assert.Equal(t, "msg-123", attrMap["messaging.message.id"])
 	assert.Equal(t, int64(1024), attrMap["messaging.message.body.size"])
 }
 

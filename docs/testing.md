@@ -8,10 +8,12 @@ The OpenTelemetry SDK provides an in-memory exporter for testing:
 
 ```go
 import (
+    "context"
     "testing"
 
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
+    "go.opentelemetry.io/otel/codes"
     "go.opentelemetry.io/otel/sdk/trace"
     "go.opentelemetry.io/otel/sdk/trace/tracetest"
 
@@ -145,6 +147,7 @@ func TestSpanHierarchy(t *testing.T) {
 
 ```go
 import (
+    "net/http"
     "net/http/httptest"
 
     otxhttp "github.com/arloliu/otx/http"
@@ -196,7 +199,12 @@ func TestNATSHandler(t *testing.T) {
         nil,
     )
 
-    // Create mock message
+    // Create mock message.
+    // Note: mockMsg must implement all 11 methods of jetstream.Msg
+    // (Subject, Data, Headers, Reply, Ack, DoubleAck, Nak, NakWithDelay,
+    // Term, TermWithReason, InProgress, Metadata). A two-field struct with
+    // no methods does not satisfy the interface. See the complete test double
+    // in nats/consumer_test.go for a compilable implementation.
     msg := &mockMsg{
         subject: "orders.created",
         data:    []byte(`{"id": "123"}`),

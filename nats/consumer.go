@@ -27,6 +27,10 @@ func WrapConsumer(c jetstream.Consumer, stream string, opts ...Option) *TracedCo
 // If tp is nil, the global TracerProvider is used.
 // If prop is nil, the global TextMapPropagator is used (or opts.prop if set).
 //
+// Tracer precedence: on the default tracer name, an otx-configured global
+// tracer takes precedence over an explicit non-nil tp. Pass WithTracerName to
+// force use of the supplied tp under your own instrumentation name.
+//
 // Panics if c is nil.
 func WrapConsumerWithProviders(
 	c jetstream.Consumer,

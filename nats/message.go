@@ -39,7 +39,7 @@ func (m *TracedMsg) Context() context.Context {
 // Example:
 //
 //	consumer.Consume(func(msg jetstream.Msg) {
-//	    tracedMsg := otelnats.NewTracedMsg(msg)
+//	    tracedMsg := nats.NewTracedMsg(msg)
 //	    ctx, endSpan := tracedMsg.StartProcessSpan()
 //	    defer endSpan(nil)
 //
@@ -129,7 +129,7 @@ func (m *TracedMsg) StartProcessSpanWithTracer(
 // Example:
 //
 //	consumer.Consume(func(msg jetstream.Msg) {
-//	    tracedMsg := otelnats.NewTracedMsg(msg)
+//	    tracedMsg := nats.NewTracedMsg(msg)
 //	    ctx := tracedMsg.Context() // Contains extracted trace context
 //	    processOrder(ctx, msg)
 //	    msg.Ack()

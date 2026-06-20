@@ -144,6 +144,14 @@ srv := grpc.NewServer(
 ### Basic Setup
 
 ```go
+import (
+    "log"
+
+    "google.golang.org/grpc"
+    "google.golang.org/grpc/credentials/insecure"
+    otxgrpc "github.com/arloliu/otx/grpc"
+)
+
 conn, err := grpc.NewClient(
     "order-service:50051",
     grpc.WithStatsHandler(otxgrpc.ClientHandler()),
@@ -205,7 +213,7 @@ ctx = otx.ExtractGRPC(ctx, md)
 
 ## Semantic Conventions
 
-The middleware automatically sets [HTTP semantic convention](https://opentelemetry.io/docs/specs/semconv/http/) attributes:
+The middleware sets [HTTP semantic convention](https://opentelemetry.io/docs/specs/semconv/http/) attributes:
 
 ### Server Spans
 
@@ -235,8 +243,8 @@ The middleware automatically sets [HTTP semantic convention](https://opentelemet
 // ✅ Good: Low cardinality
 mux.Handle("/users/{id}", otxhttp.Handler(handler, "GET /users/{id}"))
 
-// ❌ Bad: High cardinality (different span name per user)
-// Default behavior includes full path
+// ❌ Bad: High cardinality — passing a raw per-request path as the operation
+// yields a distinct span per user (e.g. "/users/1", "/users/2", ...)
 ```
 
 ### 2. Add Business Context
@@ -280,6 +288,9 @@ func TestHandler(t *testing.T) {
     exporter := tracetest.NewInMemoryExporter()
     tp := trace.NewTracerProvider(trace.WithSyncer(exporter))
 
+    myHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+    })
     handler := otxhttp.MiddlewareWithProviders(tp, nil, nil)(myHandler)
 
     // Test with httptest
