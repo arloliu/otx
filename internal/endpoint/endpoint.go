@@ -50,8 +50,8 @@ func Classify(raw string) (Kind, error) {
 	}
 
 	// Detect any other "://" pattern and reject it.
-	if idx := strings.Index(raw, "://"); idx >= 0 {
-		scheme := raw[:idx]
+	if before, _, ok := strings.Cut(raw, "://"); ok {
+		scheme := before
 		return KindBare, fmt.Errorf(
 			"invalid endpoint scheme %q: transport is selected by protocol, not the endpoint scheme; "+
 				"use host:port or an http(s):// URL",
