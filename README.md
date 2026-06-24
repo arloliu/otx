@@ -14,6 +14,7 @@ The `otx` package provides a unified, configuration-driven wrapper around OpenTe
 - **🔗 Automatic Context Propagation** - W3C TraceContext and Baggage propagation out of the box
 - **🌐 HTTP/gRPC Middleware** - Drop-in middleware for automatic request tracing
 - **📨 NATS JetStream Integration** - Publisher and consumer wrappers with trace context injection
+- **📦 IPC Context Propagation** - Carry span context and baggage across in-process boundaries as a compact, versioned binary blob
 - **🏷️ Semantic Conventions** - Built-in helpers following OpenTelemetry naming standards
 - **🎯 Span Kind Helpers** - `StartServer`, `StartClient`, `StartProducer`, `StartConsumer` for accurate service maps
 - **⚡ Baggage Utilities** - Simple API for cross-service context propagation
@@ -31,6 +32,7 @@ The `otx` package provides a unified, configuration-driven wrapper around OpenTe
 | [Tracing Best Practices](docs/tracing-best-practices.md) | Patterns for effective tracing |
 | [HTTP/gRPC Integration](docs/http-grpc-integration.md) | Middleware setup and usage |
 | [NATS Integration](docs/nats-integration.md) | JetStream publisher/consumer tracing |
+| [IPC OTel Carrier](docs/ipc-carrier.md) | Carry span context + baggage across in-process boundaries as binary |
 | [Testing](docs/testing.md) | Testing strategies with OTX |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
 | [OTLP Simulator CLI](docs/otlp-sim.md) | CLI tool for simulating traces and logs |
@@ -281,6 +283,35 @@ client := &http.Client{
     ),
 }
 ```
+
+### Cross-Process Context Propagation (IPC Carrier)
+
+For network RPC between services, use W3C text propagation (gRPC/HTTP middleware
+above). When you instead need to carry the OTel state as an **opaque blob inside
+your own message** — a `bytes` field, a pipe frame, shared memory, an on-disk
+queue — the `github.com/arloliu/otx/carrier` package marshals span context and
+baggage to a compact, versioned binary form.
+
+```go
+import "github.com/arloliu/otx/carrier"
+
+// Producer: embed the OTel state in your message.
+if c, ok := carrier.FromContext(ctx); ok { // ok=false when there's nothing to carry
+    msg.Trace, _ = c.MarshalBinary()        // empty carrier marshals to nil
+}
+
+// Consumer: restore the trace and baggage.
+if carrier.HasOTel(msg.Trace) {             // cheap pre-filter, no allocation
+    var c carrier.Carrier
+    if err := c.UnmarshalBinary(msg.Trace); err == nil {
+        ctx = c.Context(ctx)                 // span context installed as remote parent
+    } // on error: untrusted bytes, proceed without trace context
+}
+```
+
+`UnmarshalBinary` treats input as hostile (bounded, panic-free, receiver unchanged
+on error), and the wire format is forward-compatible across otx versions. See the
+[IPC OTel Carrier guide](docs/ipc-carrier.md) for the full API and semantics.
 
 ## Provider Lifecycle and Shutdown
 
