@@ -5,6 +5,35 @@ All notable changes to otx (`github.com/arloliu/otx`) are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.2.0 — 2026-06-24
+
+Feature release: a new `carrier` sub-package for carrying OpenTelemetry propagation state (span
+context + baggage) across in-process IPC boundaries as a compact, versioned binary blob. Purely
+additive — no existing exported symbol or default behavior changed.
+
+### Added
+
+- `carrier` sub-package (`github.com/arloliu/otx/carrier`): `Carrier`, a portable, immutable snapshot
+  of OTel propagation state that implements `encoding.BinaryMarshaler` / `BinaryAppender` /
+  `BinaryUnmarshaler`, so callers can embed trace context as an opaque blob inside their own IPC
+  message (a `bytes` field, a pipe frame, shared memory) instead of only as W3C transport headers.
+  - Construction and context bridges: `New`, `FromContext`, `Context`, `ParseW3C`.
+  - Accessors: `SpanContext`, `Baggage`, `IsEmpty`.
+  - Binary codec: `MarshalBinary`, `AppendBinary`, `UnmarshalBinary`, and the `HasOTel` hot-path skip
+    filter, with the `MaxBytes` input bound and the `ErrMalformed` / `ErrUnsupportedVersion` sentinels.
+  - W3C text interop: `W3C` (to `traceparent` / `tracestate` / `baggage`) and `ParseW3C` (from them),
+    delegating to the stock OTel propagators.
+
+  The wire format is compact, versioned, and forward-compatible (a decoder skips unknown tags).
+  `UnmarshalBinary` treats input as hostile — total size is bounded before allocation, it never panics,
+  and the receiver is left unchanged on error. The empty carrier marshals to `nil` and costs nothing to
+  detect and skip on both the producing and consuming sides.
+
+### Documentation
+
+- Added the IPC carrier guide (`docs/ipc-carrier.md`) and linked it from the README, with a feature
+  entry and a short producer/consumer usage example.
+
 ## v1.1.1 — 2026-06-21
 
 Patch release: backward-compatible bug fixes, internal robustness/error-handling hardening, code
